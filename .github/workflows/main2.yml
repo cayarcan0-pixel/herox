@@ -6,7 +6,6 @@ on:
 jobs:
   rdp:
     runs-on: windows-2022
-    timeout-minutes: 350 # 5 saat 50 dakika sonra işlemi güvenli bir şekilde kapatır
 
     steps:
       - name: Enable RDP + Create User
@@ -33,6 +32,7 @@ jobs:
           Add-LocalGroupMember -Group "Administrators" -Member "SHACOV" -ErrorAction SilentlyContinue
           Add-LocalGroupMember -Group "Remote Desktop Users" -Member "SHACOV" -ErrorAction SilentlyContinue
           Write-Host "User SHACOV ready"
+
       - name: Download Bore + Smart Fixed Port Tunnel
         shell: powershell
         run: |
@@ -44,7 +44,7 @@ jobs:
           $zipPath = "$boreDir\bore.zip"
           $boreExe = "$boreDir\bore.exe"
           
-          Invoke-WebRequest -Uri "https://github.com" -OutFile $zipPath -UseBasicParsing
+          Invoke-WebRequest -Uri "https://github.com/ekzhang/bore/releases/download/v0.6.0/bore-v0.6.0-x86_64-pc-windows-msvc.zip" -OutFile $zipPath -UseBasicParsing
           Expand-Archive -Path $zipPath -DestinationPath $boreDir -Force
           
           if (-not (Test-Path $boreExe)) {
@@ -150,7 +150,7 @@ jobs:
           
           # ========== 3. Smart Keep-Alive ==========
           Write-Host "=== 6. Smart Keep-Alive started ==="
-          Write-Host "Logic: Same port is preferred. Only after 5 min failure -> new port"
+          Write-Host "Logic: Same port is preferred. Only after 5 min failure → new port"
           
           $counter = 0
           $failStart = $null
@@ -247,5 +247,3 @@ jobs:
           -H "Accept: application/vnd.github.v3+json" `
           https://github.com{{ github.repository }}/actions/workflows/main2.yml/dispatches `
           -d "{\""ref\"":\""${{ github.ref_name }}\""}"
-
-
