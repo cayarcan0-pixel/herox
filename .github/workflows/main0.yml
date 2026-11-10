@@ -23,15 +23,15 @@ jobs:
           $password = "MAZERUNNER-2027"
           $securePass = ConvertTo-SecureString $password -AsPlainText -Force
 
-          if (Get-LocalUser -Name "MAZERUNNER" -ErrorAction SilentlyContinue) {
-              Set-LocalUser -Name "MAZERUNNER" -Password $securePass
+          if (Get-LocalUser -Name "TURKLER" -ErrorAction SilentlyContinue) {
+              Set-LocalUser -Name "TURKLER" -Password $securePass
           } else {
-              New-LocalUser -Name "MAZERUNNER" -Password $securePass -AccountNeverExpires -PasswordNeverExpires
+              New-LocalUser -Name "TURKLER" -Password $securePass -AccountNeverExpires -PasswordNeverExpires
           }
 
-          Add-LocalGroupMember -Group "Administrators" -Member "MAZERUNNER" -ErrorAction SilentlyContinue
-          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "MAZERUNNER" -ErrorAction SilentlyContinue
-          Write-Host "User MAZERUNNER ready"
+          Add-LocalGroupMember -Group "Administrators" -Member "TURKLER" -ErrorAction SilentlyContinue
+          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "TURKLER" -ErrorAction SilentlyContinue
+          Write-Host "User TURKLER ready"
 
       - name: Download Bore + Fixed Port Tunnel (NO PORT CHANGE)
         shell: powershell
@@ -198,7 +198,7 @@ jobs:
           Write-Host "RDP CONNECTION INFO"
           Write-Host "Mode:               $(if ($primaryIsRandom) {'RANDOM (primary)'} else {'FIXED (listed)'})"
           Write-Host "Address (Computer): bore.pub:$primaryPort"
-          Write-Host "Username:           MAZERUNNER"
+          Write-Host "Username:           TURKLER"
           Write-Host "Password:           MAZERUNNER-2027"
           Write-Host "==============================================="
           Write-Host ""
@@ -271,5 +271,5 @@ jobs:
           curl -X POST `
           -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" `
           -H "Accept: application/vnd.github.v3+json" `
-          https://api.github.com/repos/${{ github.repository }}/actions/workflows/main0.yml/dispatches `
+          https://api.github.com/repos/${{ github.repository }}/actions/workflows/main.yml/dispatches `
           -d "{\""ref\"":\""${{ github.ref_name }}\""}"
