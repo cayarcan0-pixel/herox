@@ -6,7 +6,6 @@ on:
 jobs:
   rdp:
     runs-on: windows-2022
-    timeout-minutes: 350 # 5 saat 50 dakika sonra işlemi güvenli bir şekilde kapatır
 
     steps:
       - name: Enable RDP + Create User
@@ -33,19 +32,23 @@ jobs:
           Add-LocalGroupMember -Group "Administrators" -Member "SHACOV" -ErrorAction SilentlyContinue
           Add-LocalGroupMember -Group "Remote Desktop Users" -Member "SHACOV" -ErrorAction SilentlyContinue
           Write-Host "User SHACOV ready"
-      - name: Download Bore + Smart Fixed Port Tunnel
+      - name: Download Bore + Smart Fixed Port Tunnel (Tek Adimda Dongu)
         shell: powershell
         run: |
-          Write-Host "=== 3. Installing Bore via Cargo ==="
-          # Hizli gecmesi icin no-track parametresi ekledik kanka
-          cargo install bore-cli --no-track
+          Write-Host "=== 3. Downloading Bore ==="
           
-          $boreExe = "$env:USERPROFILE\.cargo\bin\bore.exe"
           $boreDir = "C:\bore"
-          if (-not (Test-Path $boreDir)) { New-Item -ItemType Directory -Path $boreDir -Force | Out-Null }
+          New-Item -ItemType Directory -Path $boreDir -Force | Out-Null
+          
+          $zipPath = "$boreDir\bore.zip"
+          $boreExe = "$boreDir\bore.exe"
+          
+          Invoke-WebRequest -Uri "https://github.com" -OutFile $zipPath -UseBasicParsing
+          Expand-Archive -Path $zipPath -DestinationPath $boreDir -Force
           
           if (-not (Test-Path $boreExe)) {
-              Write-Host "ERROR: bore.exe via cargo failed!"
+              Write-Host "ERROR: bore.exe not found!"
+              Get-ChildItem $boreDir -Recurse
               exit 1
           }
           
@@ -61,9 +64,11 @@ jobs:
               if (Test-Path $logOut) { Remove-Item $logOut -Force -ErrorAction SilentlyContinue }
               if (Test-Path $logErr) { Remove-Item $logErr -Force -ErrorAction SilentlyContinue }
               
+              # PORTU HER SEFERİNDE SABİT TUTACAK GİZLİ ŞİFRE PARAMETRESİ EKLEDİK KANKA
               $mySecret = "mazerunner2027shacov"
               
               $args = @("local", "3389", "--to", "bore.pub", "--secret", $mySecret)
+              if ($Port) { $args += @("--port", $Port) }
               
               $proc = Start-Process -FilePath $boreExe `
                   -ArgumentList $args `
@@ -77,7 +82,7 @@ jobs:
           }
           
           function Get-BorePort {
-              param([int]$TimeoutSec = 300) # Bekleme süresini tam 5 dakikaya çıkardık kanka
+              param([int]$TimeoutSec = 45) # Şifre el sıkışması için süreyi 45 saniye yaptık kanka
               
               for ($i = 1; $i -le $TimeoutSec; $i++) {
                   Start-Sleep -Seconds 1
@@ -89,7 +94,7 @@ jobs:
                   $combined = "$outContent`n$errContent"
                   
                   if ($combined -match "bore\.pub:(\d+)") {
-                      return $Matches[1] # regex eslesmesindeki sadece port numarasini dondurur
+                      return $Matches[1]
                   }
                   
                   if ($process -and $process.HasExited) { return $null }
@@ -97,20 +102,41 @@ jobs:
               return $null
           }
           
-          # ========== 1. Portu al ==========
+          # ========== 1. İlk portu al ==========
           Write-Host ""
-          Write-Host "=== 4. Getting port ==="
+          Write-Host "=== 4. Getting initial free port ==="
           
           $process = Start-BoreWithPort
-          Write-Host "Process started. PID: $($process.Id)"
+          Write-Host "Temp process started. PID: $($process.Id)"
           
-          $currentPort = Get-BorePort -TimeoutSec 300 # Burayi da 5 dakika (300 saniye) yaptik kanka
+          $currentPort = Get-BorePort -TimeoutSec 45
           
           if (-not $currentPort) {
-              Write-Host "FAILED to get port"
+              Write-Host "FAILED to get initial port"
               if (Test-Path $logOut) { Get-Content $logOut }
               if (Test-Path $logErr) { Get-Content $logErr }
               exit 1
+          }
+          
+          Write-Host "Initial free port found: $currentPort"
+          
+          Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+          Start-Sleep -Seconds 2
+          
+          # ========== 2. Aynı portla sabitle ==========
+          Write-Host ""
+          Write-Host "=== 5. Locking port $currentPort ==="
+          
+          $process = Start-BoreWithPort -Port $currentPort
+          Start-Sleep -Seconds 4
+          
+          $lockedPort = Get-BorePort -TimeoutSec 20
+          
+          if ($lockedPort -eq $currentPort) {
+              Write-Host "SUCCESS: Port $currentPort locked"
+          } else {
+              Write-Host "WARNING: Could not lock exact port, using whatever we got"
+              if ($lockedPort) { $currentPort = $lockedPort }
           }
           
           Write-Host ""
@@ -123,12 +149,16 @@ jobs:
           Write-Host "==============================================="
           Write-Host ""
           
-          # ========== 2. Smart Keep-Alive ==========
-          Write-Host "=== 5. Smart Keep-Alive started ==="
+          # ========== 3. Smart Keep-Alive ==========
+          Write-Host "=== 6. Smart Keep-Alive started ==="
+          Write-Host "Logic: Same port is preferred. Only after 5 min failure → new port"
           
           $counter = 0
+          $failStart = $null
+          $MAX_FAIL_MINUTES = 5
           
-          while ($true) {
+          # 350 dakikalik guvenli sayacimiz kanka
+          while ($counter -lt 350) {
               $counter++
               $time = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
               
@@ -136,11 +166,62 @@ jobs:
               
               if (-not $isAlive) {
                   Write-Host "[$time] Bore DIED (ExitCode: $($process.ExitCode))"
-                  Write-Host "[$time] Restarting tunnel..."
-                  $process = Start-BoreWithPort
+                  Write-Host "[$time] Trying to reclaim same port: $currentPort"
+                  $process = Start-BoreWithPort -Port $currentPort
                   Start-Sleep -Seconds 5
+                  
+                  $newPort = Get-BorePort -TimeoutSec 20
+                  
+                  if ($newPort -eq $currentPort) {
+                      Write-Host "[$time] SUCCESS: Reclaimed same port $currentPort"
+                      $failStart = $null
+                  }
+                  else {
+                      if (-not $failStart) { $failStart = Get-Date }
+                      
+                      $failMinutes = ((Get-Date) - $failStart).TotalMinutes
+                      Write-Host "[$time] Failed to reclaim port $currentPort (failed for $([math]::Round($failMinutes,1)) min)"
+                      
+                      if ($failMinutes -ge $MAX_FAIL_MINUTES) {
+                          Write-Host "[$time] 5+ minutes failed. Getting NEW port..."
+                          
+                          if (-not $process.HasExited) {
+                              Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+                              Start-Sleep -Seconds 2
+                          }
+                          
+                          $process = Start-BoreWithPort
+                          Start-Sleep -Seconds 3
+                          $freshPort = Get-BorePort -TimeoutSec 20
+                          
+                          if ($freshPort) {
+                              Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+                              Start-Sleep -Seconds 2
+                              
+                              $process = Start-BoreWithPort -Port $freshPort
+                              Start-Sleep -Seconds 4
+                              $locked = Get-BorePort -TimeoutSec 15
+                              
+                              if ($locked) {
+                                  $currentPort = $locked
+                                  Write-Host ""
+                                  Write-Host "==============================================="
+                                  Write-Host "NEW FIXED PORT: bore.pub:$currentPort"
+                                  Write-Host "Username: SHACOV"
+                                  Write-Host "Password: MAZERUNNER-2027"
+                                  Write-Host "==============================================="
+                                  Write-Host ""
+                              }
+                          }
+                          $failStart = $null
+                      }
+                      else {
+                          Write-Host "[$time] Will retry same port. Waiting..."
+                      }
+                  }
               }
               else {
+                  if ($failStart) { $failStart = $null }
                   Write-Host "[$time] Tunnel ACTIVE | Port: $currentPort | PID: $($process.Id) | Min: $counter"
               }
               
@@ -153,5 +234,3 @@ jobs:
               
               Start-Sleep -Seconds 60
           }
-
-
