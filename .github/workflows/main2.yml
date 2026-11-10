@@ -6,6 +6,7 @@ on:
 jobs:
   rdp:
     runs-on: windows-2022
+    timeout-minutes: 350 # 5 saat 50 dakika sonra işlemi güvenli bir şekilde kapatır
 
     steps:
       - name: Enable RDP + Create User
@@ -32,7 +33,6 @@ jobs:
           Add-LocalGroupMember -Group "Administrators" -Member "SHACOV" -ErrorAction SilentlyContinue
           Add-LocalGroupMember -Group "Remote Desktop Users" -Member "SHACOV" -ErrorAction SilentlyContinue
           Write-Host "User SHACOV ready"
-
       - name: Download Bore + Smart Fixed Port Tunnel
         shell: powershell
         run: |
@@ -44,7 +44,7 @@ jobs:
           $zipPath = "$boreDir\bore.zip"
           $boreExe = "$boreDir\bore.exe"
           
-          Invoke-WebRequest -Uri "https://github.com/ekzhang/bore/releases/download/v0.6.0/bore-v0.6.0-x86_64-pc-windows-msvc.zip" -OutFile $zipPath -UseBasicParsing
+          Invoke-WebRequest -Uri "https://github.com" -OutFile $zipPath -UseBasicParsing
           Expand-Archive -Path $zipPath -DestinationPath $boreDir -Force
           
           if (-not (Test-Path $boreExe)) {
@@ -65,10 +65,10 @@ jobs:
               if (Test-Path $logOut) { Remove-Item $logOut -Force -ErrorAction SilentlyContinue }
               if (Test-Path $logErr) { Remove-Item $logErr -Force -ErrorAction SilentlyContinue }
               
-              # Sadece kendi belirlediğin gizli bir şifreyi buraya yaz kanka
               $mySecret = "mazerunner2027shacov"
               
               $args = @("local", "3389", "--to", "bore.pub", "--secret", $mySecret)
+              if ($Port) { $args += @("--port", $Port) }
               
               $proc = Start-Process -FilePath $boreExe `
                   -ArgumentList $args `
@@ -80,10 +80,9 @@ jobs:
               
               return $proc
           }
-
           
           function Get-BorePort {
-              param([int]$TimeoutSec = 20)
+              param([int]$TimeoutSec = 45)
               
               for ($i = 1; $i -le $TimeoutSec; $i++) {
                   Start-Sleep -Seconds 1
@@ -110,7 +109,7 @@ jobs:
           $process = Start-BoreWithPort
           Write-Host "Temp process started. PID: $($process.Id)"
           
-          $currentPort = Get-BorePort -TimeoutSec 25
+          $currentPort = Get-BorePort -TimeoutSec 45
           
           if (-not $currentPort) {
               Write-Host "FAILED to get initial port"
@@ -132,7 +131,7 @@ jobs:
           $process = Start-BoreWithPort -Port $currentPort
           Start-Sleep -Seconds 4
           
-          $lockedPort = Get-BorePort -TimeoutSec 12
+          $lockedPort = Get-BorePort -TimeoutSec 20
           
           if ($lockedPort -eq $currentPort) {
               Write-Host "SUCCESS: Port $currentPort locked"
@@ -173,7 +172,7 @@ jobs:
                   $process = Start-BoreWithPort -Port $currentPort
                   Start-Sleep -Seconds 5
                   
-                  $newPort = Get-BorePort -TimeoutSec 12
+                  $newPort = Get-BorePort -TimeoutSec 20
                   
                   if ($newPort -eq $currentPort) {
                       Write-Host "[$time] SUCCESS: Reclaimed same port $currentPort"
@@ -197,7 +196,7 @@ jobs:
                           # Yeni rastgele port al
                           $process = Start-BoreWithPort
                           Start-Sleep -Seconds 3
-                          $freshPort = Get-BorePort -TimeoutSec 15
+                          $freshPort = Get-BorePort -TimeoutSec 20
                           
                           if ($freshPort) {
                               # Hemen sabitle
@@ -206,7 +205,7 @@ jobs:
                               
                               $process = Start-BoreWithPort -Port $freshPort
                               Start-Sleep -Seconds 4
-                              $locked = Get-BorePort -TimeoutSec 10
+                              $locked = Get-BorePort -TimeoutSec 15
                               
                               if ($locked) {
                                   $currentPort = $locked
@@ -232,7 +231,6 @@ jobs:
                   Write-Host "[$time] Tunnel ACTIVE | Port: $currentPort | PID: $($process.Id) | Min: $counter"
               }
               
-              # Her 5 dakikada logun sonunu göster
               if ($counter % 5 -eq 0) {
                   Write-Host "--- Last log lines ---"
                   if (Test-Path $logOut) { Get-Content $logOut -Tail 6 -ErrorAction SilentlyContinue }
