@@ -95,47 +95,81 @@ jobs:
                       return $Matches[1]
                   }
                   
-                  if ($process -and $process.HasExited) { return $null }
+                  # Process parametresi global değil, dikkatli kullanmak gerekir.
+                  # Burada sadece log kontrolü yapıyoruz, process kontrolünü çağıran taraf yapacak.
               }
               return $null
           }
           
-          # ========== 1. İlk portu al ==========
+          # ========== 1. Kullanıcının Belirlediği Portları Dene ==========
+          $PreferredPorts = @(
+                28468,
+                15784,
+                19738,
+                21363,
+                21364,
+                21365,
+                21367,
+                21368,
+                21369,
+                21371
+            )
+          
           Write-Host ""
-          Write-Host "=== 4. Getting initial free port ==="
+          Write-Host "=== 4. Trying preferred ports ==="
           
-          $process = Start-BoreWithPort
-          Write-Host "Temp process started. PID: $($process.Id)"
+          $currentPort = $null
+          $process = $null
           
-          $currentPort = Get-BorePort -TimeoutSec 25
-          
-          if (-not $currentPort) {
-              Write-Host "FAILED to get initial port"
-              if (Test-Path $logOut) { Get-Content $logOut }
-              if (Test-Path $logErr) { Get-Content $logErr }
-              exit 1
+          foreach ($p in $PreferredPorts) {
+              Write-Host "Trying preferred port: $p ..."
+              $proc = Start-BoreWithPort -Port $p
+              Start-Sleep -Seconds 5
+              
+              $found = Get-BorePort -TimeoutSec 8
+              
+              if ($found -eq $p) {
+                  Write-Host "SUCCESS: Locked preferred port $p"
+                  $currentPort = $p
+                  $process = $proc
+                  break
+              } else {
+                  Write-Host "Port $p unavailable. Killing attempt..."
+                  if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
+                  Start-Sleep -Seconds 2
+              }
           }
           
-          Write-Host "Initial free port found: $currentPort"
-          
-          # Geçici process'i öldür
-          Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
-          Start-Sleep -Seconds 2
-          
-          # ========== 2. Aynı portla sabitle ==========
-          Write-Host ""
-          Write-Host "=== 5. Locking port $currentPort ==="
-          
-          $process = Start-BoreWithPort -Port $currentPort
-          Start-Sleep -Seconds 4
-          
-          $lockedPort = Get-BorePort -TimeoutSec 12
-          
-          if ($lockedPort -eq $currentPort) {
-              Write-Host "SUCCESS: Port $currentPort locked"
-          } else {
-              Write-Host "WARNING: Could not lock exact port, using whatever we got"
-              if ($lockedPort) { $currentPort = $lockedPort }
+          # Eğer tercih edilen portların hiçbiri olmadıysa, rastgele al
+          if (-not $currentPort) {
+              Write-Host "All preferred ports failed. Falling back to random port..."
+              $process = Start-BoreWithPort
+              Start-Sleep -Seconds 5
+              $currentPort = Get-BorePort -TimeoutSec 20
+              
+              if (-not $currentPort) {
+                  Write-Host "FAILED to get initial random port"
+                  if (Test-Path $logOut) { Get-Content $logOut }
+                  if (Test-Path $logErr) { Get-Content $logErr }
+                  exit 1
+              }
+              Write-Host "Random port acquired: $currentPort"
+              
+              # Rastgele portu da sabitlemeye çalış (aynı portla yeniden başlat)
+              Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+              Start-Sleep -Seconds 2
+              
+              Write-Host "=== 5. Locking random port $currentPort ==="
+              $process = Start-BoreWithPort -Port $currentPort
+              Start-Sleep -Seconds 4
+              $lockedPort = Get-BorePort -TimeoutSec 12
+              
+              if ($lockedPort -eq $currentPort) {
+                  Write-Host "SUCCESS: Random port $currentPort locked"
+              } else {
+                  Write-Host "WARNING: Could not lock random port, using whatever we got"
+                  if ($lockedPort) { $currentPort = $lockedPort }
+              }
           }
           
           Write-Host ""
@@ -191,30 +225,54 @@ jobs:
                               Start-Sleep -Seconds 2
                           }
                           
-                          # Yeni rastgele port al
-                          $process = Start-BoreWithPort
-                          Start-Sleep -Seconds 3
-                          $freshPort = Get-BorePort -TimeoutSec 15
+                          # Önce tercih edilen portları tekrar dene
+                          $freshPort = $null
+                          foreach ($p in $PreferredPorts) {
+                              Write-Host "[$time] Re-trying preferred port: $p ..."
+                              $proc = Start-BoreWithPort -Port $p
+                              Start-Sleep -Seconds 4
+                              $found = Get-BorePort -TimeoutSec 8
+                              if ($found -eq $p) {
+                                  Write-Host "[$time] SUCCESS: Got preferred port $p again"
+                                  $process = $proc
+                                  $freshPort = $p
+                                  break
+                              } else {
+                                  if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
+                                  Start-Sleep -Seconds 2
+                              }
+                          }
+                          
+                          if (-not $freshPort) {
+                              Write-Host "[$time] Preferred ports all busy. Getting random port..."
+                              $process = Start-BoreWithPort
+                              Start-Sleep -Seconds 3
+                              $freshPort = Get-BorePort -TimeoutSec 15
+                              
+                              if ($freshPort) {
+                                  # Hemen sabitle
+                                  Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+                                  Start-Sleep -Seconds 2
+                                  
+                                  $process = Start-BoreWithPort -Port $freshPort
+                                  Start-Sleep -Seconds 4
+                                  $locked = Get-BorePort -TimeoutSec 10
+                                  
+                                  if ($locked) {
+                                      $freshPort = $locked
+                                  }
+                              }
+                          }
                           
                           if ($freshPort) {
-                              # Hemen sabitle
-                              Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
-                              Start-Sleep -Seconds 2
-                              
-                              $process = Start-BoreWithPort -Port $freshPort
-                              Start-Sleep -Seconds 4
-                              $locked = Get-BorePort -TimeoutSec 10
-                              
-                              if ($locked) {
-                                  $currentPort = $locked
-                                  Write-Host ""
-                                  Write-Host "==============================================="
-                                  Write-Host "NEW FIXED PORT: bore.pub:$currentPort"
-                                  Write-Host "Username: SHACOV"
-                                  Write-Host "Password: MAZERUNNER-2027"
-                                  Write-Host "==============================================="
-                                  Write-Host ""
-                              }
+                              $currentPort = $freshPort
+                              Write-Host ""
+                              Write-Host "==============================================="
+                              Write-Host "NEW FIXED PORT: bore.pub:$currentPort"
+                              Write-Host "Username: SHACOV"
+                              Write-Host "Password: MAZERUNNER-2027"
+                              Write-Host "==============================================="
+                              Write-Host ""
                           }
                           
                           $failStart = $null
