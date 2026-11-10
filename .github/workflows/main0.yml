@@ -266,11 +266,4 @@ jobs:
               Start-Sleep -Seconds 60
           }
 
-      - name: Kapaninca Otomatik Yeniden Baslat
-        if: always()
-        run: |
-          curl -X POST `
-          -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" `
-          -H "Accept: application/vnd.github.v3+json" `
-          https://api.github.com/repos/${{ github.repository }}/actions/workflows/main.yml/dispatches `
-          -d "{\""ref\"":\""${{ github.ref_name }}\""}"
+
