@@ -116,11 +116,12 @@ jobs:
           
           # ========== Port listesi ==========
           $PreferredPorts = @(
-              91959,
-              91958,
-              91957,
-              91956,
-              91955
+              27895,
+              27896,
+              27897,
+              27898,
+              27899,
+              27900
           )
           
           # ========== Yardimci: Verilen sirayla port dene, ilk tutani dondur ==========
@@ -130,9 +131,9 @@ jobs:
               foreach ($p in $Ports) {
                   Write-Host "Trying port: $p ..."
                   $proc = Start-BoreWithPort -Port $p
-                  Start-Sleep -Seconds 5
+                  Start-Sleep -Seconds 15
                   
-                  $found = Get-BorePort -TimeoutSec 8
+                  $found = Get-BorePort -TimeoutSec 20
                   
                   if ($found -eq "$p") {
                       Write-Host "SUCCESS: Locked port $p"
