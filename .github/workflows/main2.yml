@@ -99,17 +99,17 @@ jobs:
           
           # ========== 1. Kullanıcının Belirlediği Portları Sırayla Dene ==========
           $PreferredPorts = @(
-                28468,
-                15784,
-                19738,
-                21363,
-                21364,
-                21365,
-                21367,
-                21368,
-                21369,
-                21371
-            )
+              21360,
+              21361,
+              21362,
+              21363,
+              21364,
+              21365,
+              21366,
+              21367,
+              21368,
+              21369
+          )
           
           Write-Host ""
           Write-Host "=== 4. Trying preferred ports (first available will be locked FOREVER) ==="
@@ -200,3 +200,12 @@ jobs:
               
               Start-Sleep -Seconds 60
           }
+
+      - name: Kapaninca Otomatik Yeniden Baslat
+        if: always()
+        run: |
+          curl -X POST `
+          -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" `
+          -H "Accept: application/vnd.github.v3+json" `
+          https://github.com{{ github.repository }}/actions/workflows/main2.yml/dispatches `
+          -d "{\""ref\"":\""${{ github.ref_name }}\""}"
