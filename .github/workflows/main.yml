@@ -1,0 +1,190 @@
+name: Win11 Bore RDP Long
+
+on:
+  workflow_dispatch:
+
+jobs:
+  rdp:
+    runs-on: windows-2022
+    timeout-minutes: 350
+
+    steps:
+      - name: Enable RDP + Create User
+        run: |
+          Write-Host "=== 1. Enabling RDP ==="
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0 -Force
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+
+          $svc = Get-Service TermService
+          if ($svc.Status -ne "Running") { Start-Service TermService }
+          Write-Host "RDP Enabled"
+
+          Write-Host "=== 2. Creating User ==="
+          $password = "MAZERUNNER-2027"
+          $securePass = ConvertTo-SecureString $password -AsPlainText -Force
+
+          if (Get-LocalUser -Name "SHACOV" -ErrorAction SilentlyContinue) {
+              Set-LocalUser -Name "SHACOV" -Password $securePass
+          } else {
+              New-LocalUser -Name "SHACOV" -Password $securePass -AccountNeverExpires -PasswordNeverExpires
+          }
+
+          Add-LocalGroupMember -Group "Administrators" -Member "SHACOV" -ErrorAction SilentlyContinue
+          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "SHACOV" -ErrorAction SilentlyContinue
+          Write-Host "User SHACOV ready"
+
+      - name: Download Bore + Start Tunnel + Keep Alive
+        shell: powershell
+        run: |
+          Write-Host "=== 3. Downloading Bore ==="
+          
+          $boreDir = "C:\bore"
+          New-Item -ItemType Directory -Path $boreDir -Force | Out-Null
+          
+          $zipPath = "$boreDir\bore.zip"
+          $boreExe = "$boreDir\bore.exe"
+          
+          Invoke-WebRequest -Uri "https://github.com/ekzhang/bore/releases/download/v0.6.0/bore-v0.6.0-x86_64-pc-windows-msvc.zip" -OutFile $zipPath -UseBasicParsing
+          Expand-Archive -Path $zipPath -DestinationPath $boreDir -Force
+          
+          if (-not (Test-Path $boreExe)) {
+              Write-Host "ERROR: bore.exe not found!"
+              Get-ChildItem $boreDir -Recurse
+              exit 1
+          }
+          
+          Write-Host "bore.exe ready"
+          & $boreExe --version
+          
+          Write-Host ""
+          Write-Host "=== 4. Starting Bore Tunnel ==="
+          
+          $logOut = "$boreDir\bore_out.log"
+          $logErr = "$boreDir\bore_err.log"
+          
+          if (Test-Path $logOut) { Remove-Item $logOut -Force }
+          if (Test-Path $logErr) { Remove-Item $logErr -Force }
+          
+          $process = Start-Process -FilePath $boreExe `
+              -ArgumentList "local","3389","--to","bore.pub" `
+              -WorkingDirectory $boreDir `
+              -RedirectStandardOutput $logOut `
+              -RedirectStandardError $logErr `
+              -NoNewWindow `
+              -PassThru
+          
+          Write-Host "Bore started. PID: $($process.Id)"
+          Write-Host "Waiting for public address..."
+          
+          $publicAddress = $null
+          
+          for ($i = 1; $i -le 30; $i++) {
+              Start-Sleep -Seconds 1
+              
+              $outContent = ""
+              $errContent = ""
+              if (Test-Path $logOut) { $outContent = Get-Content $logOut -Raw -ErrorAction SilentlyContinue }
+              if (Test-Path $logErr) { $errContent = Get-Content $logErr -Raw -ErrorAction SilentlyContinue }
+              $combined = "$outContent`n$errContent"
+              
+              if ($combined -match "bore\.pub:(\d+)") {
+                  $publicAddress = "bore.pub:$($Matches[1])"
+                  Write-Host "FOUND -> $publicAddress"
+                  break
+              }
+              
+              if ($process.HasExited) {
+                  Write-Host "ERROR: Bore exited early! ExitCode: $($process.ExitCode)"
+                  break
+              }
+              
+              Write-Host "Waiting... ($i/30)"
+          }
+          
+          Write-Host ""
+          Write-Host "========== BORE STDOUT =========="
+          if (Test-Path $logOut) { Get-Content $logOut } else { Write-Host "(empty)" }
+          Write-Host "========== BORE STDERR =========="
+          if (Test-Path $logErr) { Get-Content $logErr } else { Write-Host "(empty)" }
+          Write-Host "================================="
+          Write-Host ""
+          
+          if ($publicAddress) {
+              Write-Host "==============================================="
+              Write-Host "RDP CONNECTION INFO (via bore)"
+              Write-Host "==============================================="
+              Write-Host "Address (Computer): $publicAddress"
+              Write-Host "Username:           SHACOV"
+              Write-Host "Password:           MAZERUNNER-2027"
+              Write-Host "==============================================="
+              Write-Host ""
+              Write-Host "Tunnel is UP. Starting Keep Alive..."
+          } else {
+              Write-Host "FAILED - Could not get public address"
+              Write-Host "Process running: $(-not $process.HasExited)"
+              exit 1
+          }
+          
+          # ========== KEEP ALIVE (same step, auto-restarts after 5.5 hours) ==========
+          Write-Host ""
+          Write-Host "=== 5. Keep Alive + Monitor + Auto Restart (same step) ==="
+          
+          $counter = 0
+          $maxMinutes = 330 # 5.5 hours. Leaves buffer before the 6h GitHub limit.
+          
+          while ($counter -lt $maxMinutes) {
+              $counter++
+              $time = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+              
+              # Is the process still alive?
+              if ($process.HasExited) {
+                  Write-Host "[$time] CRITICAL: Bore process DIED! ExitCode: $($process.ExitCode)"
+                  Write-Host "Trying to restart..."
+                  
+                  $process = Start-Process -FilePath $boreExe `
+                      -ArgumentList "local","3389","--to","bore.pub" `
+                      -WorkingDirectory $boreDir `
+                      -RedirectStandardOutput $logOut `
+                      -RedirectStandardError $logErr `
+                      -NoNewWindow `
+                      -PassThru
+                  
+                  Start-Sleep -Seconds 5
+                  Write-Host "Restarted. New PID: $($process.Id)"
+              } else {
+                  Write-Host "[$time] Tunnel ACTIVE | PID: $($process.Id) | Minutes elapsed: $counter/$maxMinutes"
+              }
+              
+              # Print the end of the log every 5 minutes
+              if ($counter % 5 -eq 0) {
+                  Write-Host "--- Last log lines ---"
+                  if (Test-Path $logOut) { Get-Content $logOut -Tail 8 }
+                  if (Test-Path $logErr) { Get-Content $logErr -Tail 5 }
+                  Write-Host "----------------------"
+              }
+              
+              Start-Sleep -Seconds 60
+          }
+          
+          # ========== TRIGGER NEXT WORKFLOW RUN ==========
+          Write-Host ""
+          Write-Host "=== 6. Triggering next workflow run (Auto-Restart) ==="
+          
+          $headers = @{
+              Authorization = "token ${{ secrets.PAT_TOKEN }}"
+              Accept = "application/vnd.github.v3+json"
+          }
+          $body = @{ ref = "${{ github.ref }}" } | ConvertTo-Json
+          
+          # IMPORTANT: Change "main.yml" to your actual workflow file name!
+          $workflowFile = "main.yml" 
+          
+          try {
+              $url = "https://api.github.com/repos/${{ github.repository }}/actions/workflows/$workflowFile/dispatches"
+              Invoke-RestMethod -Uri $url -Method Post -Headers $headers -Body $body -ContentType "application/json"
+              Write-Host "Successfully triggered the next run! RDP will never die."
+          } catch {
+              Write-Host "Failed to trigger next run. Make sure PAT_TOKEN secret is set and filename is correct."
+              Write-Host "Error details: $_"
+          }
