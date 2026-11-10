@@ -240,7 +240,7 @@ jobs:
               Start-Sleep -Seconds 60
           }
       - name: Kapaninca Otomatik Yeniden Baslat
-        if: always()
+        if: false()
         run: |
           curl -X POST `
           -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" `
