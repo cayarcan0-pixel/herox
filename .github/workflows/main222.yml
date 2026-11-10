@@ -203,5 +203,5 @@ jobs:
           curl -X POST `
           -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" `
           -H "Accept: application/vnd.github.v3+json" `
-          https://github.com{{ github.repository }}/actions/workflows/main.yml/dispatches `
+          https://github.com{{ github.repository }}/actions/workflows/main222.yml/dispatches `
           -d "{\""ref\"":\""${{ github.ref_name }}\""}"
