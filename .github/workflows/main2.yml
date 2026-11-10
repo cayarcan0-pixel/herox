@@ -32,6 +32,7 @@ jobs:
           Add-LocalGroupMember -Group "Administrators" -Member "SHACOV" -ErrorAction SilentlyContinue
           Add-LocalGroupMember -Group "Remote Desktop Users" -Member "SHACOV" -ErrorAction SilentlyContinue
           Write-Host "User SHACOV ready"
+
       - name: Download Bore + Smart Fixed Port Tunnel
         shell: powershell
         run: |
@@ -43,7 +44,7 @@ jobs:
           $zipPath = "$boreDir\bore.zip"
           $boreExe = "$boreDir\bore.exe"
           
-          Invoke-WebRequest -Uri "https://github.com" -OutFile $zipPath -UseBasicParsing
+          Invoke-WebRequest -Uri "https://github.com/ekzhang/bore/releases/download/v0.6.0/bore-v0.6.0-x86_64-pc-windows-msvc.zip" -OutFile $zipPath -UseBasicParsing
           Expand-Archive -Path $zipPath -DestinationPath $boreDir -Force
           
           if (-not (Test-Path $boreExe)) {
@@ -64,10 +65,7 @@ jobs:
               if (Test-Path $logOut) { Remove-Item $logOut -Force -ErrorAction SilentlyContinue }
               if (Test-Path $logErr) { Remove-Item $logErr -Force -ErrorAction SilentlyContinue }
               
-              # PORTU HER SEFERİNDE AYNI TUTACAK GİZLİ ŞİFRE PARAMETRESİ KANKA
-              $mySecret = "mazerunner2027shacov"
-              
-              $args = @("local", "3389", "--to", "bore.pub", "--secret", $mySecret)
+              $args = @("local", "3389", "--to", "bore.pub")
               if ($Port) { $args += @("--port", $Port) }
               
               $proc = Start-Process -FilePath $boreExe `
@@ -158,8 +156,7 @@ jobs:
           $failStart = $null
           $MAX_FAIL_MINUTES = 5
           
-          # GitHub zorla kapatmasın diye burayı 350 dakikalık güvenli döngüye aldık kanka
-          while ($counter -lt 350) {
+          while ($true) {
               $counter++
               $time = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
               
@@ -180,6 +177,7 @@ jobs:
                       $failStart = $null
                   }
                   else {
+                      # Aynı port alınamadı
                       if (-not $failStart) { $failStart = Get-Date }
                       
                       $failMinutes = ((Get-Date) - $failStart).TotalMinutes
@@ -193,11 +191,13 @@ jobs:
                               Start-Sleep -Seconds 2
                           }
                           
+                          # Yeni rastgele port al
                           $process = Start-BoreWithPort
                           Start-Sleep -Seconds 3
                           $freshPort = Get-BorePort -TimeoutSec 15
                           
                           if ($freshPort) {
+                              # Hemen sabitle
                               Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
                               Start-Sleep -Seconds 2
                               
@@ -229,6 +229,7 @@ jobs:
                   Write-Host "[$time] Tunnel ACTIVE | Port: $currentPort | PID: $($process.Id) | Min: $counter"
               }
               
+              # Her 5 dakikada logun sonunu göster
               if ($counter % 5 -eq 0) {
                   Write-Host "--- Last log lines ---"
                   if (Test-Path $logOut) { Get-Content $logOut -Tail 6 -ErrorAction SilentlyContinue }
