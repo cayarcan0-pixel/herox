@@ -44,8 +44,11 @@ jobs:
           $zipPath = "$boreDir\bore.zip"
           $boreExe = "$boreDir\bore.exe"
           
-          Invoke-WebRequest -Uri "https://github.com" -OutFile $zipPath -UseBasicParsing
+          [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+          $webClient = New-Object System.Net.WebClient
+          $webClient.DownloadFile("https://github.com", $zipPath)
           Expand-Archive -Path $zipPath -DestinationPath $boreDir -Force
+
           
           if (-not (Test-Path $boreExe)) {
               Write-Host "ERROR: bore.exe not found!"
