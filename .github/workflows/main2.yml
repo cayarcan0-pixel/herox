@@ -37,8 +37,8 @@ jobs:
         shell: powershell
         run: |
           Write-Host "=== 3. Installing Bore via Cargo ==="
-          # GitHub makinesindeki hazır Rust altyapısını kullanarak Bore'u resmi kaynaktan kuruyoruz
-          cargo install bore-cli
+          # Hizli gecmesi icin no-track parametresi ekledik kanka
+          cargo install bore-cli --no-track
           
           $boreExe = "$env:USERPROFILE\.cargo\bin\bore.exe"
           $boreDir = "C:\bore"
@@ -61,7 +61,6 @@ jobs:
               if (Test-Path $logOut) { Remove-Item $logOut -Force -ErrorAction SilentlyContinue }
               if (Test-Path $logErr) { Remove-Item $logErr -Force -ErrorAction SilentlyContinue }
               
-              # Şifren üzerinden sunucu hangi portu verirse sonraki açılışlarda onu otomatik sabit tutacak kanka
               $mySecret = "mazerunner2027shacov"
               
               $args = @("local", "3389", "--to", "bore.pub", "--secret", $mySecret)
@@ -78,7 +77,7 @@ jobs:
           }
           
           function Get-BorePort {
-              param([int]$TimeoutSec = 45)
+              param([int]$TimeoutSec = 300) # Bekleme süresini tam 5 dakikaya çıkardık kanka
               
               for ($i = 1; $i -le $TimeoutSec; $i++) {
                   Start-Sleep -Seconds 1
@@ -90,7 +89,7 @@ jobs:
                   $combined = "$outContent`n$errContent"
                   
                   if ($combined -match "bore\.pub:(\d+)") {
-                      return $Matches[1]
+                      return $Matches[1] # regex eslesmesindeki sadece port numarasini dondurur
                   }
                   
                   if ($process -and $process.HasExited) { return $null }
@@ -105,7 +104,7 @@ jobs:
           $process = Start-BoreWithPort
           Write-Host "Process started. PID: $($process.Id)"
           
-          $currentPort = Get-BorePort -TimeoutSec 45
+          $currentPort = Get-BorePort -TimeoutSec 300 # Burayi da 5 dakika (300 saniye) yaptik kanka
           
           if (-not $currentPort) {
               Write-Host "FAILED to get port"
@@ -154,4 +153,5 @@ jobs:
               
               Start-Sleep -Seconds 60
           }
+
 
