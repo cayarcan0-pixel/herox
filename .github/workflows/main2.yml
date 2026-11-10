@@ -65,8 +65,10 @@ jobs:
               if (Test-Path $logOut) { Remove-Item $logOut -Force -ErrorAction SilentlyContinue }
               if (Test-Path $logErr) { Remove-Item $logErr -Force -ErrorAction SilentlyContinue }
               
-              $args = @("local", "3389", "--to", "bore.pub")
-              if ($Port) { $args += @("--port", $Port) }
+              # Sadece kendi belirlediğin gizli bir şifreyi buraya yaz kanka
+              $mySecret = "mazerunner2027shacov"
+              
+              $args = @("local", "3389", "--to", "bore.pub", "--secret", $mySecret)
               
               $proc = Start-Process -FilePath $boreExe `
                   -ArgumentList $args `
@@ -78,6 +80,7 @@ jobs:
               
               return $proc
           }
+
           
           function Get-BorePort {
               param([int]$TimeoutSec = 20)
@@ -240,7 +243,7 @@ jobs:
               Start-Sleep -Seconds 60
           }
       - name: Kapaninca Otomatik Yeniden Baslat
-        if: false()
+        if: always()
         run: |
           curl -X POST `
           -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" `
