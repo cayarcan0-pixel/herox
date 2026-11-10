@@ -6,7 +6,6 @@ on:
 jobs:
   rdp:
     runs-on: windows-2022
-    timeout-minutes: 350
 
     steps:
       - name: Enable RDP + Create User
@@ -15,7 +14,7 @@ jobs:
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0 -Force
           Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-
+          
           $svc = Get-Service TermService
           if ($svc.Status -ne "Running") { Start-Service TermService }
           Write-Host "RDP Enabled"
@@ -34,7 +33,7 @@ jobs:
           Add-LocalGroupMember -Group "Remote Desktop Users" -Member "HEROX" -ErrorAction SilentlyContinue
           Write-Host "User HEROX ready"
 
-      - name: Download Bore + Start Tunnel + Keep Alive
+      - name: Download Bore + Smart Fixed Port Tunnel
         shell: powershell
         run: |
           Write-Host "=== 3. Downloading Bore ==="
@@ -57,134 +56,186 @@ jobs:
           Write-Host "bore.exe ready"
           & $boreExe --version
           
-          Write-Host ""
-          Write-Host "=== 4. Starting Bore Tunnel ==="
-          
           $logOut = "$boreDir\bore_out.log"
           $logErr = "$boreDir\bore_err.log"
           
-          if (Test-Path $logOut) { Remove-Item $logOut -Force }
-          if (Test-Path $logErr) { Remove-Item $logErr -Force }
-          
-          $process = Start-Process -FilePath $boreExe `
-              -ArgumentList "local","3389","--to","bore.pub" `
-              -WorkingDirectory $boreDir `
-              -RedirectStandardOutput $logOut `
-              -RedirectStandardError $logErr `
-              -NoNewWindow `
-              -PassThru
-          
-          Write-Host "Bore started. PID: $($process.Id)"
-          Write-Host "Waiting for public address..."
-          
-          $publicAddress = $null
-          
-          for ($i = 1; $i -le 30; $i++) {
-              Start-Sleep -Seconds 1
+          function Start-BoreWithPort {
+              param([string]$Port = $null)
               
-              $outContent = ""
-              $errContent = ""
-              if (Test-Path $logOut) { $outContent = Get-Content $logOut -Raw -ErrorAction SilentlyContinue }
-              if (Test-Path $logErr) { $errContent = Get-Content $logErr -Raw -ErrorAction SilentlyContinue }
-              $combined = "$outContent`n$errContent"
+              if (Test-Path $logOut) { Remove-Item $logOut -Force -ErrorAction SilentlyContinue }
+              if (Test-Path $logErr) { Remove-Item $logErr -Force -ErrorAction SilentlyContinue }
               
-              if ($combined -match "bore\.pub:(\d+)") {
-                  $publicAddress = "bore.pub:$($Matches[1])"
-                  Write-Host "FOUND -> $publicAddress"
-                  break
-              }
+              $args = @("local", "3389", "--to", "bore.pub")
+              if ($Port) { $args += @("--port", $Port) }
               
-              if ($process.HasExited) {
-                  Write-Host "ERROR: Bore exited early! ExitCode: $($process.ExitCode)"
-                  break
-              }
+              $proc = Start-Process -FilePath $boreExe `
+                  -ArgumentList $args `
+                  -WorkingDirectory $boreDir `
+                  -RedirectStandardOutput $logOut `
+                  -RedirectStandardError $logErr `
+                  -NoNewWindow `
+                  -PassThru
               
-              Write-Host "Waiting... ($i/30)"
+              return $proc
           }
           
-          Write-Host ""
-          Write-Host "========== BORE STDOUT =========="
-          if (Test-Path $logOut) { Get-Content $logOut } else { Write-Host "(empty)" }
-          Write-Host "========== BORE STDERR =========="
-          if (Test-Path $logErr) { Get-Content $logErr } else { Write-Host "(empty)" }
-          Write-Host "================================="
-          Write-Host ""
+          function Get-BorePort {
+              param([int]$TimeoutSec = 20)
+              
+              for ($i = 1; $i -le $TimeoutSec; $i++) {
+                  Start-Sleep -Seconds 1
+                  
+                  $outContent = ""
+                  $errContent = ""
+                  if (Test-Path $logOut) { $outContent = Get-Content $logOut -Raw -ErrorAction SilentlyContinue }
+                  if (Test-Path $logErr) { $errContent = Get-Content $logErr -Raw -ErrorAction SilentlyContinue }
+                  $combined = "$outContent`n$errContent"
+                  
+                  if ($combined -match "bore\.pub:(\d+)") {
+                      return $Matches[1]
+                  }
+                  
+                  if ($process -and $process.HasExited) { return $null }
+              }
+              return $null
+          }
           
-          if ($publicAddress) {
-              Write-Host "==============================================="
-              Write-Host "RDP CONNECTION INFO (via bore)"
-              Write-Host "==============================================="
-              Write-Host "Address (Computer): $publicAddress"
-              Write-Host "Username:           HEROX"
-              Write-Host "Password:           MAZERUNNER-2027"
-              Write-Host "==============================================="
-              Write-Host ""
-              Write-Host "Tunnel is UP. Starting Keep Alive..."
-          } else {
-              Write-Host "FAILED - Could not get public address"
-              Write-Host "Process running: $(-not $process.HasExited)"
+          # ========== 1. İlk portu al ==========
+          Write-Host ""
+          Write-Host "=== 4. Getting initial free port ==="
+          
+          $process = Start-BoreWithPort
+          Write-Host "Temp process started. PID: $($process.Id)"
+          
+          $currentPort = Get-BorePort -TimeoutSec 25
+          
+          if (-not $currentPort) {
+              Write-Host "FAILED to get initial port"
+              if (Test-Path $logOut) { Get-Content $logOut }
+              if (Test-Path $logErr) { Get-Content $logErr }
               exit 1
           }
           
-          # ========== KEEP ALIVE (same step, auto-restarts after 5.5 hours) ==========
+          Write-Host "Initial free port found: $currentPort"
+          
+          # Geçici process'i öldür
+          Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+          Start-Sleep -Seconds 2
+          
+          # ========== 2. Aynı portla sabitle ==========
           Write-Host ""
-          Write-Host "=== 5. Keep Alive + Monitor + Auto Restart (same step) ==="
+          Write-Host "=== 5. Locking port $currentPort ==="
+          
+          $process = Start-BoreWithPort -Port $currentPort
+          Start-Sleep -Seconds 4
+          
+          $lockedPort = Get-BorePort -TimeoutSec 12
+          
+          if ($lockedPort -eq $currentPort) {
+              Write-Host "SUCCESS: Port $currentPort locked"
+          } else {
+              Write-Host "WARNING: Could not lock exact port, using whatever we got"
+              if ($lockedPort) { $currentPort = $lockedPort }
+          }
+          
+          Write-Host ""
+          Write-Host "==============================================="
+          Write-Host "RDP CONNECTION INFO"
+          Write-Host "==============================================="
+          Write-Host "Address (Computer): bore.pub:$currentPort"
+          Write-Host "Username:           HEROX"
+          Write-Host "Password:           MAZERUNNER-2027"
+          Write-Host "==============================================="
+          Write-Host ""
+          
+          # ========== 3. Smart Keep-Alive ==========
+          Write-Host "=== 6. Smart Keep-Alive started ==="
+          Write-Host "Logic: Same port is preferred. Only after 5 min failure → new port"
           
           $counter = 0
-          $maxMinutes = 330 # 5.5 hours. Leaves buffer before the 6h GitHub limit.
+          $failStart = $null
+          $MAX_FAIL_MINUTES = 5
           
-          while ($counter -lt $maxMinutes) {
+          while ($true) {
               $counter++
               $time = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
               
-              # Is the process still alive?
-              if ($process.HasExited) {
-                  Write-Host "[$time] CRITICAL: Bore process DIED! ExitCode: $($process.ExitCode)"
-                  Write-Host "Trying to restart..."
+              $isAlive = -not $process.HasExited
+              
+              if (-not $isAlive) {
+                  Write-Host "[$time] Bore DIED (ExitCode: $($process.ExitCode))"
                   
-                  $process = Start-Process -FilePath $boreExe `
-                      -ArgumentList "local","3389","--to","bore.pub" `
-                      -WorkingDirectory $boreDir `
-                      -RedirectStandardOutput $logOut `
-                      -RedirectStandardError $logErr `
-                      -NoNewWindow `
-                      -PassThru
-                  
+                  # Önce aynı portu dene
+                  Write-Host "[$time] Trying to reclaim same port: $currentPort"
+                  $process = Start-BoreWithPort -Port $currentPort
                   Start-Sleep -Seconds 5
-                  Write-Host "Restarted. New PID: $($process.Id)"
-              } else {
-                  Write-Host "[$time] Tunnel ACTIVE | PID: $($process.Id) | Minutes elapsed: $counter/$maxMinutes"
+                  
+                  $newPort = Get-BorePort -TimeoutSec 12
+                  
+                  if ($newPort -eq $currentPort) {
+                      Write-Host "[$time] SUCCESS: Reclaimed same port $currentPort"
+                      $failStart = $null
+                  }
+                  else {
+                      # Aynı port alınamadı
+                      if (-not $failStart) { $failStart = Get-Date }
+                      
+                      $failMinutes = ((Get-Date) - $failStart).TotalMinutes
+                      Write-Host "[$time] Failed to reclaim port $currentPort (failed for $([math]::Round($failMinutes,1)) min)"
+                      
+                      if ($failMinutes -ge $MAX_FAIL_MINUTES) {
+                          Write-Host "[$time] 5+ minutes failed. Getting NEW port..."
+                          
+                          if (-not $process.HasExited) {
+                              Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+                              Start-Sleep -Seconds 2
+                          }
+                          
+                          # Yeni rastgele port al
+                          $process = Start-BoreWithPort
+                          Start-Sleep -Seconds 3
+                          $freshPort = Get-BorePort -TimeoutSec 15
+                          
+                          if ($freshPort) {
+                              # Hemen sabitle
+                              Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+                              Start-Sleep -Seconds 2
+                              
+                              $process = Start-BoreWithPort -Port $freshPort
+                              Start-Sleep -Seconds 4
+                              $locked = Get-BorePort -TimeoutSec 10
+                              
+                              if ($locked) {
+                                  $currentPort = $locked
+                                  Write-Host ""
+                                  Write-Host "==============================================="
+                                  Write-Host "NEW FIXED PORT: bore.pub:$currentPort"
+                                  Write-Host "Username: HEROX"
+                                  Write-Host "Password: MAZERUNNER-2027"
+                                  Write-Host "==============================================="
+                                  Write-Host ""
+                              }
+                          }
+                          
+                          $failStart = $null
+                      }
+                      else {
+                          Write-Host "[$time] Will retry same port. Waiting..."
+                      }
+                  }
+              }
+              else {
+                  if ($failStart) { $failStart = $null }
+                  Write-Host "[$time] Tunnel ACTIVE | Port: $currentPort | PID: $($process.Id) | Min: $counter"
               }
               
-              # Print the end of the log every 5 minutes
+              # Her 5 dakikada logun sonunu göster
               if ($counter % 5 -eq 0) {
                   Write-Host "--- Last log lines ---"
-                  if (Test-Path $logOut) { Get-Content $logOut -Tail 8 }
-                  if (Test-Path $logErr) { Get-Content $logErr -Tail 5 }
+                  if (Test-Path $logOut) { Get-Content $logOut -Tail 6 -ErrorAction SilentlyContinue }
+                  if (Test-Path $logErr) { Get-Content $logErr -Tail 4 -ErrorAction SilentlyContinue }
                   Write-Host "----------------------"
               }
               
               Start-Sleep -Seconds 60
-          }
-          
-          # ========== TRIGGER NEXT WORKFLOW RUN ==========
-          Write-Host ""
-          Write-Host "=== 6. Triggering next workflow run (Auto-Restart) ==="
-          
-          $headers = @{
-              Authorization = "token ${{ secrets.PAT_TOKEN }}"
-              Accept = "application/vnd.github.v3+json"
-          }
-          $body = @{ ref = "${{ github.ref }}" } | ConvertTo-Json
-          
-          # IMPORTANT: Change "main.yml" to your actual workflow file name!
-          $workflowFile = "main.yml" 
-          
-          try {
-              $url = "https://api.github.com/repos/${{ github.repository }}/actions/workflows/$workflowFile/dispatches"
-              Invoke-RestMethod -Uri $url -Method Post -Headers $headers -Body $body -ContentType "application/json"
-              Write-Host "Successfully triggered the next run! RDP will never die."
-          } catch {
-              Write-Host "Failed to trigger next run. Make sure PAT_TOKEN secret is set and filename is correct."
-              Write-Host "Error details: $_"
           }
