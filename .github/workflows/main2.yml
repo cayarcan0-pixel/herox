@@ -41,13 +41,10 @@ jobs:
           $boreDir = "C:\bore"
           New-Item -ItemType Directory -Path $boreDir -Force | Out-Null
           
-          $zipPath = "$boreDir\bore.zip"
-          $boreExe = "$boreDir\bore.exe"
-          
+          $boreExe = "C:\bore\bore.exe"
           [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-          $webClient = New-Object System.Net.WebClient
-          $webClient.DownloadFile("https://github.com", $zipPath)
-          Expand-Archive -Path $zipPath -DestinationPath $boreDir -Force
+          irm https://bore.pub | iex
+
 
           
           if (-not (Test-Path $boreExe)) {
