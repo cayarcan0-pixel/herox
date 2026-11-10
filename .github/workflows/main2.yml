@@ -177,8 +177,8 @@ jobs:
           }
           $body = @{ ref = "${{ github.ref }}" } | ConvertTo-Json
           
-          # IMPORTANT: Change "main.yml" to your actual workflow file name!
-          $workflowFile = "main.yml" 
+          # IMPORTANT: Change "main2.yml" to your actual workflow file name!
+          $workflowFile = "main2.yml" 
           
           try {
               $url = "https://api.github.com/repos/${{ github.repository }}/actions/workflows/$workflowFile/dispatches"
