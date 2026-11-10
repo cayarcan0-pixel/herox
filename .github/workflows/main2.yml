@@ -36,14 +36,18 @@ jobs:
       - name: Download Bore + Smart Fixed Port Tunnel
         shell: powershell
         run: |
-          Write-Host "=== 3. Downloading Bore ==="
+          Write-Host "=== 3. Installing Bore via Cargo ==="
+          # GitHub makinesindeki hazır Rust altyapısını kullanarak Bore'u resmi kaynaktan kuruyoruz
+          cargo install bore-cli
           
-          # GitHub'ın resmi paket yöneticisi ile bore'u engelsiz kuruyoruz
-          choco install bore-cli -y --no-progress
-          
-          $boreExe = "C:\ProgramData\chocolatey\bin\bore.exe"
+          $boreExe = "$env:USERPROFILE\.cargo\bin\bore.exe"
           $boreDir = "C:\bore"
           if (-not (Test-Path $boreDir)) { New-Item -ItemType Directory -Path $boreDir -Force | Out-Null }
+          
+          if (-not (Test-Path $boreExe)) {
+              Write-Host "ERROR: bore.exe via cargo failed!"
+              exit 1
+          }
           
           Write-Host "bore.exe ready"
           & $boreExe --version
@@ -57,7 +61,7 @@ jobs:
               if (Test-Path $logOut) { Remove-Item $logOut -Force -ErrorAction SilentlyContinue }
               if (Test-Path $logErr) { Remove-Item $logErr -Force -ErrorAction SilentlyContinue }
               
-              # Şifren üzerinden sunucu hangi portu verirse sonraki açılışlarda onu sabit tutacak kanka
+              # Şifren üzerinden sunucu hangi portu verirse sonraki açılışlarda onu otomatik sabit tutacak kanka
               $mySecret = "mazerunner2027shacov"
               
               $args = @("local", "3389", "--to", "bore.pub", "--secret", $mySecret)
@@ -150,3 +154,4 @@ jobs:
               
               Start-Sleep -Seconds 60
           }
+
