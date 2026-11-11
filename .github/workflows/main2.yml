@@ -6,6 +6,7 @@ on:
 jobs:
   rdp:
     runs-on: windows-2022
+    timeout-minutes: 360
 
     steps:
       - name: Enable RDP + Create User
@@ -78,23 +79,6 @@ jobs:
               return $proc
           }
           
-          function Start-BoreRandom {
-              if (Test-Path $logOut) { Remove-Item $logOut -Force -ErrorAction SilentlyContinue }
-              if (Test-Path $logErr) { Remove-Item $logErr -Force -ErrorAction SilentlyContinue }
-              
-              $args = @("local", "3389", "--to", "bore.pub")
-              
-              $proc = Start-Process -FilePath $boreExe `
-                  -ArgumentList $args `
-                  -WorkingDirectory $boreDir `
-                  -RedirectStandardOutput $logOut `
-                  -RedirectStandardError $logErr `
-                  -NoNewWindow `
-                  -PassThru
-              
-              return $proc
-          }
-          
           function Get-BorePort {
               param([int]$TimeoutSec = 20)
               
@@ -114,107 +98,64 @@ jobs:
               return $null
           }
           
-          # ========== Port listesi ==========
+          # ========== 1. Kullanıcının Belirlediği Portları Sırayla Dene ==========
           $PreferredPorts = @(
-              21360,
-              21361,
-              21362,
-              21363,
-              21364,
-              21365,
-              21366,
-              21367,
-              21368,
-              21369
+                21360,
+                21361,
+                21362,
+                21363,
+                21364,
+                21365,
+                21366,
+                21367,
+                21368,
+                21369
           )
           
-          # ========== Yardimci: Verilen sirayla port dene, ilk tutani dondur ==========
-          function Try-PortsInOrder {
-              param([int[]]$Ports)
-              
-              foreach ($p in $Ports) {
-                  Write-Host "Trying port: $p ..."
-                  $proc = Start-BoreWithPort -Port $p
-                  Start-Sleep -Seconds 5
-                  
-                  $found = Get-BorePort -TimeoutSec 8
-                  
-                  if ($found -eq "$p") {
-                      Write-Host "SUCCESS: Locked port $p"
-                      return @{ Port = "$p"; Process = $proc; Mode = "FIXED" }
-                  } else {
-                      Write-Host "Port $p unavailable. Killing attempt..."
-                      if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
-                      Start-Sleep -Seconds 2
-                  }
-              }
-              return $null
-          }
-          
-          # ========== Yardimci: Rastgele port al ==========
-          function Try-RandomPort {
-              Write-Host "Trying RANDOM port..."
-              $proc = Start-BoreRandom
-              Start-Sleep -Seconds 5
-              
-              $found = Get-BorePort -TimeoutSec 15
-              
-              if ($found) {
-                  Write-Host "SUCCESS: Got random port $found"
-                  return @{ Port = "$found"; Process = $proc; Mode = "RANDOM" }
-              } else {
-                  Write-Host "ERROR: Could not get random port."
-                  if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
-                  return $null
-              }
-          }
-          
-          # ========== 4. Baslangic: Once listeden dene, olmazsa rastgele ==========
           Write-Host ""
-          Write-Host "=== 4. Initial connection ==="
+          Write-Host "=== 4. Trying preferred ports (first available will be locked FOREVER) ==="
           
-          $primaryPort = $null      # Bir kere baglanilan port (her zaman ilk denenir)
-          $primaryIsRandom = $false # Primary rastgele mi alindi?
+          $currentPort = $null
           $process = $null
           
-          $result = Try-PortsInOrder -Ports $PreferredPorts
-          
-          if ($result) {
-              $primaryPort = $result.Port
-              $process = $result.Process
-              $primaryIsRandom = $false
-          } else {
-              Write-Host ""
-              Write-Host "None of the preferred ports available. Falling back to RANDOM..."
-              $result = Try-RandomPort
+          foreach ($p in $PreferredPorts) {
+              Write-Host "Trying preferred port: $p ..."
+              $proc = Start-BoreWithPort -Port $p
+              Start-Sleep -Seconds 5
               
-              if ($result) {
-                  $primaryPort = $result.Port
-                  $process = $result.Process
-                  $primaryIsRandom = $true
+              $found = Get-BorePort -TimeoutSec 8
+              
+              if ($found -eq $p) {
+                  Write-Host "SUCCESS: Locked preferred port $p"
+                  $currentPort = $p
+                  $process = $proc
+                  break
               } else {
-                  Write-Host "ERROR: Could not establish any tunnel. Exiting."
-                  exit 1
+                  Write-Host "Port $p unavailable. Killing attempt..."
+                  if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
+                  Start-Sleep -Seconds 2
               }
+          }
+          
+          if (-not $currentPort) {
+              Write-Host "ERROR: None of the preferred ports are available right now."
+              Write-Host "No random fallback. Exiting so workflow restarts and retries the list."
+              exit 1
           }
           
           Write-Host ""
           Write-Host "==============================================="
-          Write-Host "RDP CONNECTION INFO"
-          Write-Host "Mode:               $(if ($primaryIsRandom) {'RANDOM (primary)'} else {'FIXED (listed)'})"
-          Write-Host "Address (Computer): bore.pub:$primaryPort"
+          Write-Host "RDP CONNECTION INFO (LOCKED PORT)"
+          Write-Host "==============================================="
+          Write-Host "Address (Computer): bore.pub:$currentPort"
           Write-Host "Username:           SHACOV"
           Write-Host "Password:           MAZERUNNER-2027"
           Write-Host "==============================================="
           Write-Host ""
           
-          # ========== 5. Keep-Alive ==========
-          # Kural: Her zaman ONCE primary portu dene.
-          #        Primary tutmazsa listeyi komple dene.
-          #        Liste de tutmazsa rastgele dene.
-          #        Yeni tutan port primary olur ve sonraki turlarda yine ilk o denenir.
+          # ========== 2. Keep-Alive: SADECE AYNI PORTU GERİ ALMAYA ÇALIŞ ==========
           Write-Host "=== 5. Keep-Alive started ==="
-          Write-Host "Logic: ALWAYS try primary port first. Then full list. Then random. New success becomes new primary."
+          Write-Host "Logic: NEVER change port. If tunnel dies, only retry the SAME port."
           
           $counter = 0
           
@@ -226,40 +167,31 @@ jobs:
               
               if (-not $isAlive) {
                   Write-Host "[$time] Bore DIED (ExitCode: $($process.ExitCode))"
-                  Write-Host "[$time] Reconnect order: primary ($primaryPort) -> full list -> random"
+                  Write-Host "[$time] Retrying SAME port only: $currentPort"
                   
-                  $newResult = $null
+                  $process = Start-BoreWithPort -Port $currentPort
+                  Start-Sleep -Seconds 5
                   
-                  # 1) Once primary portu dene
-                  Write-Host "[$time] Step 1: trying PRIMARY port $primaryPort ..."
-                  $newResult = Try-PortsInOrder -Ports @([int]$primaryPort)
+                  $newPort = Get-BorePort -TimeoutSec 12
                   
-                  # 2) Primary tutmadiysa listeyi komple dene
-                  if (-not $newResult) {
-                      Write-Host "[$time] Step 2: primary failed. Trying FULL LIST ..."
-                      $newResult = Try-PortsInOrder -Ports $PreferredPorts
+                  if ($newPort -eq $currentPort) {
+                      Write-Host "[$time] SUCCESS: Reclaimed same port $currentPort"
                   }
-                  
-                  # 3) Liste de tutmadiysa rastgele dene
-                  if (-not $newResult) {
-                      Write-Host "[$time] Step 3: full list failed. Trying RANDOM ..."
-                      $newResult = Try-RandomPort
-                  }
-                  
-                  if ($newResult) {
-                      $primaryPort = $newResult.Port
-                      $process = $newResult.Process
-                      $primaryIsRandom = ($newResult.Mode -eq "RANDOM")
-                      Write-Host "[$time] RECONNECTED. New primary port: $primaryPort (Mode: $($newResult.Mode))"
-                  } else {
-                      Write-Host "[$time] All attempts failed. Waiting 30s before next round..."
+                  else {
+                      Write-Host "[$time] Could not reclaim port $currentPort. Will keep retrying same port."
+                      Write-Host "[$time] NOT switching to another port. Waiting 30s before next retry..."
+                      
+                      if (-not $process.HasExited) {
+                          Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+                      }
                       Start-Sleep -Seconds 30
                   }
               }
               else {
-                  Write-Host "[$time] Tunnel ACTIVE | Primary Port: $primaryPort | Mode: $(if ($primaryIsRandom) {'RANDOM'} else {'FIXED'}) | PID: $($process.Id) | Min: $counter"
+                  Write-Host "[$time] Tunnel ACTIVE | Port: $currentPort | PID: $($process.Id) | Min: $counter"
               }
               
+              # Her 5 dakikada logun sonunu göster
               if ($counter % 5 -eq 0) {
                   Write-Host "--- Last log lines ---"
                   if (Test-Path $logOut) { Get-Content $logOut -Tail 6 -ErrorAction SilentlyContinue }
@@ -269,11 +201,21 @@ jobs:
               
               Start-Sleep -Seconds 60
           }
+
       - name: Kapaninca Otomatik Yeniden Baslat
         if: always()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.RUNNER }}
         run: |
-          curl -X POST `
-          -H "Authorization: token ${{ secrets.RUNNER }}" `
-          -H "Accept: application/vnd.github.v3+json" `
-          https://github.com{{ github.repository }}/actions/workflows/main2.yml/dispatches `
-          -d "{\""ref\"":\""${{ github.ref_name }}\""}"
+          echo "Job bitti, workflow yeniden tetikleniyor..."
+          
+          # BURAYA KENDİ WORKFLOW DOSYA ADINI YAZ (örnek: rdp.yml veya github-RDP.yml)
+          WORKFLOW_FILE="main2.yaml"
+          
+          curl -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github.v3+json" \
+            -H "Content-Type: application/json" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/workflows/${WORKFLOW_FILE}/dispatches" \
+            -d "{\"ref\":\"${{ github.ref_name }}\"}"
