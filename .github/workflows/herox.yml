@@ -24,15 +24,15 @@ jobs:
           $password = "MAZERUNNER-2027"
           $securePass = ConvertTo-SecureString $password -AsPlainText -Force
 
-          if (Get-LocalUser -Name "HEROX" -ErrorAction SilentlyContinue) {
-              Set-LocalUser -Name "HEROX" -Password $securePass
+          if (Get-LocalUser -Name "SHACOV" -ErrorAction SilentlyContinue) {
+              Set-LocalUser -Name "SHACOV" -Password $securePass
           } else {
-              New-LocalUser -Name "HEROX" -Password $securePass -AccountNeverExpires -PasswordNeverExpires
+              New-LocalUser -Name "SHACOV" -Password $securePass -AccountNeverExpires -PasswordNeverExpires
           }
 
-          Add-LocalGroupMember -Group "Administrators" -Member "HEROX" -ErrorAction SilentlyContinue
-          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "HEROX" -ErrorAction SilentlyContinue
-          Write-Host "User HEROX ready"
+          Add-LocalGroupMember -Group "Administrators" -Member "SHACOV" -ErrorAction SilentlyContinue
+          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "SHACOV" -ErrorAction SilentlyContinue
+          Write-Host "User SHACOV ready"
 
       - name: Download Bore + Fixed Port Tunnel (NO PORT CHANGE)
         shell: powershell
@@ -100,15 +100,15 @@ jobs:
           
           # ========== 1. Kullanıcının Belirlediği Portları Sırayla Dene ==========
           $PreferredPorts = @(
-              28469,
-              28470,
-              28471,
-              28472,
-              28473,
-              28474,
-              28475,
-              28476,
-              28477
+                28469,
+                28470,
+                28471,
+                28472,
+                28473,
+                28474,
+                28475,
+                28476,
+                28477
           )
           
           Write-Host ""
@@ -147,7 +147,7 @@ jobs:
           Write-Host "RDP CONNECTION INFO (LOCKED PORT)"
           Write-Host "==============================================="
           Write-Host "Address (Computer): bore.pub:$currentPort"
-          Write-Host "Username:           HEROX"
+          Write-Host "Username:           SHACOV"
           Write-Host "Password:           MAZERUNNER-2027"
           Write-Host "==============================================="
           Write-Host ""
@@ -208,13 +208,14 @@ jobs:
           GH_TOKEN: ${{ secrets.RUNNER }}
         run: |
           echo "Job bitti, workflow yeniden tetikleniyor..."
-          
-          # BURAYA KENDİ WORKFLOW DOSYA ADINI YAZ (örnek: rdp.yml veya github-RDP.yml)
-          WORKFLOW_FILE="main.yaml"
-          
-          curl -X POST \
+
+          # BURAYA GERÇEK DOSYA ADINI YAZ
+          WORKFLOW_FILE="herox.yml"
+
+          curl -L \
+            -X POST \
+            -H "Accept: application/vnd.github+json" \
             -H "Authorization: Bearer $GH_TOKEN" \
-            -H "Accept: application/vnd.github.v3+json" \
-            -H "Content-Type: application/json" \
+            -H "X-GitHub-Api-Version: 2026-03-10" \
             "https://api.github.com/repos/${{ github.repository }}/actions/workflows/${WORKFLOW_FILE}/dispatches" \
-            -d "{\"ref\":\"${{ github.ref_name }}\"}"
+            -d '{"ref":"${{ github.ref_name }}"}'
