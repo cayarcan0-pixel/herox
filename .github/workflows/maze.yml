@@ -1,0 +1,217 @@
+name: Win11 Bore RDP Long
+
+on:
+  workflow_dispatch:
+
+jobs:
+  rdp:
+    runs-on: windows-2022
+    timeout-minutes: 360
+
+    steps:
+      - name: Enable RDP + Create User
+        run: |
+          Write-Host "=== 1. Enabling RDP ==="
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0 -Force
+          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+          
+          $svc = Get-Service TermService
+          if ($svc.Status -ne "Running") { Start-Service TermService }
+          Write-Host "RDP Enabled"
+
+          Write-Host "=== 2. Creating User ==="
+          $password = "MAZERUNNER-2027"
+          $securePass = ConvertTo-SecureString $password -AsPlainText -Force
+
+          if (Get-LocalUser -Name "TURKLERHERYERDE" -ErrorAction SilentlyContinue) {
+              Set-LocalUser -Name "TURKLERHERYERDE" -Password $securePass
+          } else {
+              New-LocalUser -Name "TURKLERHERYERDE" -Password $securePass -AccountNeverExpires -PasswordNeverExpires
+          }
+
+          Add-LocalGroupMember -Group "Administrators" -Member "TURKLERHERYERDE" -ErrorAction SilentlyContinue
+          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "TURKLERHERYERDE" -ErrorAction SilentlyContinue
+          Write-Host "User TURKLERHERYERDE ready"
+
+      - name: Download Bore + Fixed Port Tunnel (NO PORT CHANGE)
+        shell: powershell
+        run: |
+          Write-Host "=== 3. Downloading Bore ==="
+          
+          $boreDir = "C:\bore"
+          New-Item -ItemType Directory -Path $boreDir -Force | Out-Null
+          
+          $zipPath = "$boreDir\bore.zip"
+          $boreExe = "$boreDir\bore.exe"
+          
+          Invoke-WebRequest -Uri "https://github.com/ekzhang/bore/releases/download/v0.6.0/bore-v0.6.0-x86_64-pc-windows-msvc.zip" -OutFile $zipPath -UseBasicParsing
+          Expand-Archive -Path $zipPath -DestinationPath $boreDir -Force
+          
+          if (-not (Test-Path $boreExe)) {
+              Write-Host "ERROR: bore.exe not found!"
+              Get-ChildItem $boreDir -Recurse
+              exit 1
+          }
+          
+          Write-Host "bore.exe ready"
+          & $boreExe --version
+          
+          $logOut = "$boreDir\bore_out.log"
+          $logErr = "$boreDir\bore_err.log"
+          
+          function Start-BoreWithPort {
+              param([string]$Port)
+              
+              if (Test-Path $logOut) { Remove-Item $logOut -Force -ErrorAction SilentlyContinue }
+              if (Test-Path $logErr) { Remove-Item $logErr -Force -ErrorAction SilentlyContinue }
+              
+              $args = @("local", "3389", "--to", "bore.pub", "--port", $Port)
+              
+              $proc = Start-Process -FilePath $boreExe `
+                  -ArgumentList $args `
+                  -WorkingDirectory $boreDir `
+                  -RedirectStandardOutput $logOut `
+                  -RedirectStandardError $logErr `
+                  -NoNewWindow `
+                  -PassThru
+              
+              return $proc
+          }
+          
+          function Get-BorePort {
+              param([int]$TimeoutSec = 20)
+              
+              for ($i = 1; $i -le $TimeoutSec; $i++) {
+                  Start-Sleep -Seconds 1
+                  
+                  $outContent = ""
+                  $errContent = ""
+                  if (Test-Path $logOut) { $outContent = Get-Content $logOut -Raw -ErrorAction SilentlyContinue }
+                  if (Test-Path $logErr) { $errContent = Get-Content $logErr -Raw -ErrorAction SilentlyContinue }
+                  $combined = "$outContent`n$errContent"
+                  
+                  if ($combined -match "bore\.pub:(\d+)") {
+                      return $Matches[1]
+                  }
+              }
+              return $null
+          }
+          
+          # ========== 1. Kullanıcının Belirlediği Portları Sırayla Dene ==========
+          $PreferredPorts = @(
+                31321,
+                31322,
+                31323,
+                31324,
+                31325,
+                31326
+          )
+          
+          Write-Host ""
+          Write-Host "=== 4. Trying preferred ports (first available will be locked FOREVER) ==="
+          
+          $currentPort = $null
+          $process = $null
+          
+          foreach ($p in $PreferredPorts) {
+              Write-Host "Trying preferred port: $p ..."
+              $proc = Start-BoreWithPort -Port $p
+              Start-Sleep -Seconds 5
+              
+              $found = Get-BorePort -TimeoutSec 8
+              
+              if ($found -eq $p) {
+                  Write-Host "SUCCESS: Locked preferred port $p"
+                  $currentPort = $p
+                  $process = $proc
+                  break
+              } else {
+                  Write-Host "Port $p unavailable. Killing attempt..."
+                  if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
+                  Start-Sleep -Seconds 2
+              }
+          }
+          
+          if (-not $currentPort) {
+              Write-Host "ERROR: None of the preferred ports are available right now."
+              Write-Host "No random fallback. Exiting so workflow restarts and retries the list."
+              exit 1
+          }
+          
+          Write-Host ""
+          Write-Host "==============================================="
+          Write-Host "RDP CONNECTION INFO (LOCKED PORT)"
+          Write-Host "==============================================="
+          Write-Host "Address (Computer): bore.pub:$currentPort"
+          Write-Host "Username:           TURKLERHERYERDE"
+          Write-Host "Password:           MAZERUNNER-2027"
+          Write-Host "==============================================="
+          Write-Host ""
+          
+          # ========== 2. Keep-Alive: SADECE AYNI PORTU GERİ ALMAYA ÇALIŞ ==========
+          Write-Host "=== 5. Keep-Alive started ==="
+          Write-Host "Logic: NEVER change port. If tunnel dies, only retry the SAME port."
+          
+          $counter = 0
+          
+          while ($true) {
+              $counter++
+              $time = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+              
+              $isAlive = -not $process.HasExited
+              
+              if (-not $isAlive) {
+                  Write-Host "[$time] Bore DIED (ExitCode: $($process.ExitCode))"
+                  Write-Host "[$time] Retrying SAME port only: $currentPort"
+                  
+                  $process = Start-BoreWithPort -Port $currentPort
+                  Start-Sleep -Seconds 5
+                  
+                  $newPort = Get-BorePort -TimeoutSec 12
+                  
+                  if ($newPort -eq $currentPort) {
+                      Write-Host "[$time] SUCCESS: Reclaimed same port $currentPort"
+                  }
+                  else {
+                      Write-Host "[$time] Could not reclaim port $currentPort. Will keep retrying same port."
+                      Write-Host "[$time] NOT switching to another port. Waiting 30s before next retry..."
+                      
+                      if (-not $process.HasExited) {
+                          Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+                      }
+                      Start-Sleep -Seconds 30
+                  }
+              }
+              else {
+                  Write-Host "[$time] Tunnel ACTIVE | Port: $currentPort | PID: $($process.Id) | Min: $counter"
+              }
+              
+              # Her 5 dakikada logun sonunu göster
+              if ($counter % 5 -eq 0) {
+                  Write-Host "--- Last log lines ---"
+                  if (Test-Path $logOut) { Get-Content $logOut -Tail 6 -ErrorAction SilentlyContinue }
+                  if (Test-Path $logErr) { Get-Content $logErr -Tail 4 -ErrorAction SilentlyContinue }
+                  Write-Host "----------------------"
+              }
+              
+              Start-Sleep -Seconds 60
+          }
+
+      - name: Kapaninca Otomatik Yeniden Baslat
+        if: always()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.RUNNER }}
+        run: |
+          echo "Job bitti, workflow yeniden tetikleniyor..."
+          
+          # BURAYA KENDİ WORKFLOW DOSYA ADINI YAZ (örnek: rdp.yml veya github-RDP.yml)
+          WORKFLOW_FILE="maze.yaml"
+          
+          curl -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github.v3+json" \
+            -H "Content-Type: application/json" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/workflows/${WORKFLOW_FILE}/dispatches" \
+            -d "{\"ref\":\"${{ github.ref_name }}\"}"
