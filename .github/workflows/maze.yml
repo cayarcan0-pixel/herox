@@ -207,7 +207,7 @@ jobs:
           echo "Job bitti, workflow yeniden tetikleniyor..."
           
           # BURAYA KENDİ WORKFLOW DOSYA ADINI YAZ (örnek: rdp.yml veya github-RDP.yml)
-          WORKFLOW_FILE="maze.yaml"
+          WORKFLOW_FILE="maze.yml"
           
           curl -X POST \
             -H "Authorization: Bearer $GH_TOKEN" \
