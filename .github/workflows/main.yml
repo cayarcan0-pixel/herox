@@ -6,6 +6,7 @@ on:
 jobs:
   rdp:
     runs-on: windows-2022
+    timeout-minutes: 360
 
     steps:
       - name: Enable RDP + Create User
@@ -202,10 +203,18 @@ jobs:
 
       - name: Kapaninca Otomatik Yeniden Baslat
         if: always()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.RUNNER }}
         run: |
-          curl -X POST `
-          -H "Authorization: token ${{ secrets.RUNNER }}" `
-          -H "Accept: application/vnd.github.v3+json" `
-          https://github.com{{ github.repository }}/actions/workflows/main.yml/dispatches `
-          -d "{\""ref\"":\""${{ github.ref_name }}\""}"
-
+          echo "Job bitti, workflow yeniden tetikleniyor..."
+          
+          # BURAYA KENDİ WORKFLOW DOSYA ADINI YAZ (örnek: rdp.yml veya github-RDP.yml)
+          WORKFLOW_FILE="main.yaml"
+          
+          curl -X POST \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "Accept: application/vnd.github.v3+json" \
+            -H "Content-Type: application/json" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/workflows/${WORKFLOW_FILE}/dispatches" \
+            -d "{\"ref\":\"${{ github.ref_name }}\"}"
