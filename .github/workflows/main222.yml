@@ -23,15 +23,15 @@ jobs:
           $password = "MAZERUNNER-2027"
           $securePass = ConvertTo-SecureString $password -AsPlainText -Force
 
-          if (Get-LocalUser -Name "NEXUSOWNER" -ErrorAction SilentlyContinue) {
-              Set-LocalUser -Name "NEXUSOWNER" -Password $securePass
+          if (Get-LocalUser -Name "SHACOV" -ErrorAction SilentlyContinue) {
+              Set-LocalUser -Name "SHACOV" -Password $securePass
           } else {
-              New-LocalUser -Name "NEXUSOWNER" -Password $securePass -AccountNeverExpires -PasswordNeverExpires
+              New-LocalUser -Name "SHACOV" -Password $securePass -AccountNeverExpires -PasswordNeverExpires
           }
 
-          Add-LocalGroupMember -Group "Administrators" -Member "NEXUSOWNER" -ErrorAction SilentlyContinue
-          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "NEXUSOWNER" -ErrorAction SilentlyContinue
-          Write-Host "User NEXUSOWNER ready"
+          Add-LocalGroupMember -Group "Administrators" -Member "SHACOV" -ErrorAction SilentlyContinue
+          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "SHACOV" -ErrorAction SilentlyContinue
+          Write-Host "User SHACOV ready"
 
       - name: Download Bore + Fixed Port Tunnel (NO PORT CHANGE)
         shell: powershell
@@ -199,7 +199,7 @@ jobs:
           Write-Host "RDP CONNECTION INFO"
           Write-Host "Mode:               $(if ($primaryIsRandom) {'RANDOM (primary)'} else {'FIXED (listed)'})"
           Write-Host "Address (Computer): bore.pub:$primaryPort"
-          Write-Host "Username:           NEXUSOWNER"
+          Write-Host "Username:           SHACOV"
           Write-Host "Password:           MAZERUNNER-2027"
           Write-Host "==============================================="
           Write-Host ""
