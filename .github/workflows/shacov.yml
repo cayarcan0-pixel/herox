@@ -209,13 +209,14 @@ jobs:
           GH_TOKEN: ${{ secrets.RUNNER }}
         run: |
           echo "Job bitti, workflow yeniden tetikleniyor..."
-          
-          # BURAYA KENDİ WORKFLOW DOSYA ADINI YAZ (örnek: rdp.yml veya github-RDP.yml)
-          WORKFLOW_FILE="main2.yaml"
-          
-          curl -X POST \
+
+          # BURAYA GERÇEK DOSYA ADINI YAZ
+          WORKFLOW_FILE="shacov.yml"
+
+          curl -L \
+            -X POST \
+            -H "Accept: application/vnd.github+json" \
             -H "Authorization: Bearer $GH_TOKEN" \
-            -H "Accept: application/vnd.github.v3+json" \
-            -H "Content-Type: application/json" \
+            -H "X-GitHub-Api-Version: 2026-03-10" \
             "https://api.github.com/repos/${{ github.repository }}/actions/workflows/${WORKFLOW_FILE}/dispatches" \
-            -d "{\"ref\":\"${{ github.ref_name }}\"}"
+            -d '{"ref":"${{ github.ref_name }}"}'
