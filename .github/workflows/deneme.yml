@@ -207,7 +207,7 @@ jobs:
           echo "Job bitti, workflow yeniden tetikleniyor..."
 
           # BURAYA GERÇEK DOSYA ADINI YAZ
-          WORKFLOW_FILE="deneme.yaml"
+          WORKFLOW_FILE="deneme.yml"
 
           curl -L \
             -X POST \
