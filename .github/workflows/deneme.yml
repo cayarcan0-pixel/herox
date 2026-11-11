@@ -202,7 +202,7 @@ jobs:
         if: always()
         shell: bash
         env:
-          GH_TOKEN: ${{ secrets.RUNNER }}
+          GH_TOKEN: ${{ secrets.runner }}
         run: |
           echo "Job bitti, workflow yeniden tetikleniyor..."
           
