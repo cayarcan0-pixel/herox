@@ -24,15 +24,15 @@ jobs:
           $password = "MAZERUNNER-2027"
           $securePass = ConvertTo-SecureString $password -AsPlainText -Force
 
-          if (Get-LocalUser -Name "SHACOV" -ErrorAction SilentlyContinue) {
-              Set-LocalUser -Name "SHACOV" -Password $securePass
+          if (Get-LocalUser -Name "HEROX" -ErrorAction SilentlyContinue) {
+              Set-LocalUser -Name "HEROX" -Password $securePass
           } else {
-              New-LocalUser -Name "SHACOV" -Password $securePass -AccountNeverExpires -PasswordNeverExpires
+              New-LocalUser -Name "HEROX" -Password $securePass -AccountNeverExpires -PasswordNeverExpires
           }
 
-          Add-LocalGroupMember -Group "Administrators" -Member "SHACOV" -ErrorAction SilentlyContinue
-          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "SHACOV" -ErrorAction SilentlyContinue
-          Write-Host "User SHACOV ready"
+          Add-LocalGroupMember -Group "Administrators" -Member "HEROX" -ErrorAction SilentlyContinue
+          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "HEROX" -ErrorAction SilentlyContinue
+          Write-Host "User HEROX ready"
 
       - name: Download Bore + Fixed Port Tunnel (NO PORT CHANGE)
         shell: powershell
@@ -147,7 +147,7 @@ jobs:
           Write-Host "RDP CONNECTION INFO (LOCKED PORT)"
           Write-Host "==============================================="
           Write-Host "Address (Computer): bore.pub:$currentPort"
-          Write-Host "Username:           SHACOV"
+          Write-Host "Username:           HEROX"
           Write-Host "Password:           MAZERUNNER-2027"
           Write-Host "==============================================="
           Write-Host ""
