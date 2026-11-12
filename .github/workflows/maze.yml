@@ -150,6 +150,10 @@ jobs:
           # ========== Keep-Alive ==========
           Write-Host "=== 5. Keep-Alive started ==="
           
+          # İlk aktiflik mesajı (hemen)
+          $time = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+          Write-Host "[$time] Tunnel ACTIVE | Port: $currentPort"
+          
           $counter = 0
           
           while ($true) {
