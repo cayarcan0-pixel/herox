@@ -100,13 +100,17 @@ jobs:
           
           # ========== 1. Kullanıcının Belirlediği Portları Sırayla Dene ==========
           $PreferredPorts = @(
-                31321,
-                31322,
-                31323,
-                31324,
-                31325,
-                31326
-          )
+                28468,
+                15784,
+                19738,
+                21363,
+                21364,
+                21365,
+                21367,
+                21368,
+                21369,
+                21371
+            )
           
           Write-Host ""
           Write-Host "=== 4. Trying preferred ports ==="
@@ -147,27 +151,42 @@ jobs:
           Write-Host "==============================================="
           Write-Host ""
           
-          # ========== 2. Keep-Alive (Log tamamen kapalı) ==========
-          Write-Host "=== 5. Keep-Alive started (silent mode) ==="
+          # ========== 2. Keep-Alive (5 saniyede bir kontrol + port değişirse bilgi ver) ==========
+          Write-Host "=== 5. Keep-Alive started (silent + fast check) ==="
           
           while ($true) {
               $isAlive = -not $process.HasExited
               
               if (-not $isAlive) {
+                  # Aynı portu zorla
                   $process = Start-BoreWithPort -Port $currentPort
-                  Start-Sleep -Seconds 5
+                  Start-Sleep -Seconds 4
                   
-                  $newPort = Get-BorePort -TimeoutSec 12
+                  $newPort = Get-BorePort -TimeoutSec 8
                   
-                  if ($newPort -ne $currentPort) {
+                  if ($newPort -and $newPort -ne $currentPort) {
+                      # Port değiştiyse güncelle ve bilgiyi yazdır
+                      $currentPort = $newPort
+                      
+                      Write-Host ""
+                      Write-Host "==============================================="
+                      Write-Host "RDP CONNECTION INFO (PORT CHANGED)"
+                      Write-Host "==============================================="
+                      Write-Host "Address (Computer): bore.pub:$currentPort"
+                      Write-Host "Username:           TURKLERHERYERDE"
+                      Write-Host "Password:           MAZERUNNER-2027"
+                      Write-Host "==============================================="
+                      Write-Host ""
+                  }
+                  elseif (-not $newPort) {
+                      # Port alınamadıysa process'i temizle
                       if (-not $process.HasExited) {
                           Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
                       }
-                      Start-Sleep -Seconds 30
                   }
               }
               
-              Start-Sleep -Seconds 60
+              Start-Sleep -Seconds 5
           }
 
       - name: Kapaninca Otomatik Yeniden Baslat
