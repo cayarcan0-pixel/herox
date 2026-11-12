@@ -6,7 +6,7 @@ on:
 jobs:
   rdp:
     runs-on: windows-2022
-    timeout-minutes: 180          # 3 saat
+    timeout-minutes: 180
 
     steps:
       - name: Enable RDP + Create User
@@ -111,9 +111,10 @@ jobs:
                 21368,
                 21369
           )
+
           
           Write-Host ""
-          Write-Host "=== 4. Trying preferred ports (first available will be locked FOREVER) ==="
+          Write-Host "=== 4. Trying preferred ports ==="
           
           $currentPort = $null
           $process = $null
@@ -131,7 +132,6 @@ jobs:
                   $process = $proc
                   break
               } else {
-                  Write-Host "Port $p unavailable. Killing attempt..."
                   if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
                   Start-Sleep -Seconds 2
               }
@@ -139,7 +139,6 @@ jobs:
           
           if (-not $currentPort) {
               Write-Host "ERROR: None of the preferred ports are available right now."
-              Write-Host "No random fallback. Exiting so workflow restarts and retries the list."
               exit 1
           }
           
@@ -153,44 +152,23 @@ jobs:
           Write-Host "==============================================="
           Write-Host ""
           
-          # ========== 2. Keep-Alive (Log azaltılmış) ==========
-          Write-Host "=== 5. Keep-Alive started ==="
-          Write-Host "Logic: NEVER change port. If tunnel dies, only retry the SAME port."
-          
-          $counter = 0
+          # ========== 2. Keep-Alive (Log tamamen kapalı) ==========
+          Write-Host "=== 5. Keep-Alive started (silent mode) ==="
           
           while ($true) {
-              $counter++
-              $time = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-              
               $isAlive = -not $process.HasExited
               
               if (-not $isAlive) {
-                  Write-Host "[$time] Bore DIED (ExitCode: $($process.ExitCode))"
-                  Write-Host "[$time] Retrying SAME port only: $currentPort"
-                  
                   $process = Start-BoreWithPort -Port $currentPort
                   Start-Sleep -Seconds 5
                   
                   $newPort = Get-BorePort -TimeoutSec 12
                   
-                  if ($newPort -eq $currentPort) {
-                      Write-Host "[$time] SUCCESS: Reclaimed same port $currentPort"
-                  }
-                  else {
-                      Write-Host "[$time] Could not reclaim port $currentPort. Will keep retrying same port."
-                      Write-Host "[$time] NOT switching to another port. Waiting 30s before next retry..."
-                      
+                  if ($newPort -ne $currentPort) {
                       if (-not $process.HasExited) {
                           Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
                       }
                       Start-Sleep -Seconds 30
-                  }
-              }
-              else {
-                  # Sadece her 10 dakikada bir kısa bilgi
-                  if ($counter % 10 -eq 0) {
-                      Write-Host "[$time] Tunnel ACTIVE | Port: $currentPort | Min: $counter"
                   }
               }
               
