@@ -100,17 +100,12 @@ jobs:
           
           # ========== 1. Kullanıcının Belirlediği Portları Sırayla Dene ==========
           $PreferredPorts = @(
-                28468,
-                15784,
-                19738,
-                21363,
-                21364,
-                21365,
-                21367,
-                21368,
-                21369,
-                21371
-            )
+              31321,
+              31320,
+              31319,
+              31318,
+              31317
+           )
           
           Write-Host ""
           Write-Host "=== 4. Trying preferred ports ==="
