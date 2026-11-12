@@ -6,7 +6,7 @@ on:
 jobs:
   rdp:
     runs-on: windows-2022
-    timeout-minutes: 360
+    timeout-minutes: 180          # 3 saat
 
     steps:
       - name: Enable RDP + Create User
@@ -149,7 +149,7 @@ jobs:
           Write-Host "==============================================="
           Write-Host ""
           
-          # ========== 2. Keep-Alive: SADECE AYNI PORTU GERİ ALMAYA ÇALIŞ ==========
+          # ========== 2. Keep-Alive (Log azaltılmış) ==========
           Write-Host "=== 5. Keep-Alive started ==="
           Write-Host "Logic: NEVER change port. If tunnel dies, only retry the SAME port."
           
@@ -184,15 +184,10 @@ jobs:
                   }
               }
               else {
-                  Write-Host "[$time] Tunnel ACTIVE | Port: $currentPort | PID: $($process.Id) | Min: $counter"
-              }
-              
-              # Her 5 dakikada logun sonunu göster
-              if ($counter % 5 -eq 0) {
-                  Write-Host "--- Last log lines ---"
-                  if (Test-Path $logOut) { Get-Content $logOut -Tail 6 -ErrorAction SilentlyContinue }
-                  if (Test-Path $logErr) { Get-Content $logErr -Tail 4 -ErrorAction SilentlyContinue }
-                  Write-Host "----------------------"
+                  # Sadece her 10 dakikada bir kısa bilgi
+                  if ($counter % 10 -eq 0) {
+                      Write-Host "[$time] Tunnel ACTIVE | Port: $currentPort | Min: $counter"
+                  }
               }
               
               Start-Sleep -Seconds 60
@@ -205,13 +200,13 @@ jobs:
           GH_TOKEN: ${{ secrets.RUNNER }}
         run: |
           echo "Job bitti, workflow yeniden tetikleniyor..."
-          
-          # BURAYA KENDİ WORKFLOW DOSYA ADINI YAZ (örnek: rdp.yml veya github-RDP.yml)
+
           WORKFLOW_FILE="maze.yml"
-          
-          curl -X POST \
+
+          curl -L \
+            -X POST \
+            -H "Accept: application/vnd.github+json" \
             -H "Authorization: Bearer $GH_TOKEN" \
-            -H "Accept: application/vnd.github.v3+json" \
-            -H "Content-Type: application/json" \
+            -H "X-GitHub-Api-Version: 2026-03-10" \
             "https://api.github.com/repos/${{ github.repository }}/actions/workflows/${WORKFLOW_FILE}/dispatches" \
-            -d "{\"ref\":\"${{ github.ref_name }}\"}"
+            -d '{"ref":"${{ github.ref_name }}"}'
