@@ -34,7 +34,7 @@ jobs:
           Add-LocalGroupMember -Group "Remote Desktop Users" -Member "TURKLERHERYERDE" -ErrorAction SilentlyContinue
           Write-Host "User TURKLERHERYERDE ready"
 
-      - name: Download Bore + Fixed Port Tunnel (NO PORT CHANGE)
+      - name: Download Bore + Fixed Port Tunnel
         shell: powershell
         run: |
           Write-Host "=== 3. Downloading Bore ==="
@@ -98,14 +98,15 @@ jobs:
               return $null
           }
           
-          # ========== 1. Kullanıcının Belirlediği Portları Sırayla Dene ==========
+          # ========== Preferred Ports ==========
           $PreferredPorts = @(
-              31321,
-              31320,
-              31319,
-              31318,
-              31317
-           )
+                31321,
+                21321,
+                21320,
+                21319,
+                21318,
+                21317
+            )
           
           Write-Host ""
           Write-Host "=== 4. Trying preferred ports ==="
@@ -132,7 +133,7 @@ jobs:
           }
           
           if (-not $currentPort) {
-              Write-Host "ERROR: None of the preferred ports are available right now."
+              Write-Host "ERROR: None of the preferred ports are available."
               exit 1
           }
           
@@ -146,10 +147,13 @@ jobs:
           Write-Host "==============================================="
           Write-Host ""
           
-          # ========== 2. Keep-Alive (5 saniyede bir kontrol + port değişirse bilgi ver) ==========
-          Write-Host "=== 5. Keep-Alive started (silent + fast check) ==="
+          # ========== Keep-Alive ==========
+          Write-Host "=== 5. Keep-Alive started ==="
+          
+          $counter = 0
           
           while ($true) {
+              $counter++
               $isAlive = -not $process.HasExited
               
               if (-not $isAlive) {
@@ -160,7 +164,7 @@ jobs:
                   $newPort = Get-BorePort -TimeoutSec 8
                   
                   if ($newPort -and $newPort -ne $currentPort) {
-                      # Port değiştiyse güncelle ve bilgiyi yazdır
+                      # Port değişti
                       $currentPort = $newPort
                       
                       Write-Host ""
@@ -174,10 +178,16 @@ jobs:
                       Write-Host ""
                   }
                   elseif (-not $newPort) {
-                      # Port alınamadıysa process'i temizle
                       if (-not $process.HasExited) {
                           Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
                       }
+                  }
+              }
+              else {
+                  # Her 1 saatte bir kısa bilgi (720 x 5 saniye = 3600 saniye)
+                  if ($counter % 720 -eq 0) {
+                      $time = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+                      Write-Host "[$time] Tunnel ACTIVE | Port: $currentPort"
                   }
               }
               
