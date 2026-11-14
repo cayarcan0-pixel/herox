@@ -206,7 +206,7 @@ jobs:
         run: |
           echo "Job bitti, workflow yeniden tetikleniyor..."
 
-          WORKFLOW_FILE="maze.yml"
+          WORKFLOW_FILE="deneme.yml"
 
           curl -L \
             -X POST \
