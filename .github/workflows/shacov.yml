@@ -34,7 +34,7 @@ jobs:
           Add-LocalGroupMember -Group "Remote Desktop Users" -Member "SHACOV" -ErrorAction SilentlyContinue
           Write-Host "User SHACOV ready"
 
-      - name: Download Bore + Fixed Port Tunnel (NO PORT CHANGE)
+      - name: Download Bore + Fixed Port Tunnel
         shell: powershell
         run: |
           Write-Host "=== 3. Downloading Bore ==="
@@ -98,20 +98,15 @@ jobs:
               return $null
           }
           
-          # ========== 1. Kullanıcının Belirlediği Portları Sırayla Dene ==========
+          # ========== Preferred Ports ==========
           $PreferredPorts = @(
                 21360,
                 21361,
                 21362,
                 21363,
                 21364,
-                21365,
-                21366,
-                21367,
-                21368,
-                21369
+                21365
           )
-
           
           Write-Host ""
           Write-Host "=== 4. Trying preferred ports ==="
@@ -138,7 +133,7 @@ jobs:
           }
           
           if (-not $currentPort) {
-              Write-Host "ERROR: None of the preferred ports are available right now."
+              Write-Host "ERROR: None of the preferred ports are available."
               exit 1
           }
           
@@ -152,27 +147,55 @@ jobs:
           Write-Host "==============================================="
           Write-Host ""
           
-          # ========== 2. Keep-Alive (Log tamamen kapalı) ==========
-          Write-Host "=== 5. Keep-Alive started (silent mode) ==="
+          # ========== Keep-Alive ==========
+          Write-Host "=== 5. Keep-Alive started ==="
+          
+          # İlk aktiflik mesajı (hemen)
+          $time = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+          Write-Host "[$time] Tunnel ACTIVE | Port: $currentPort"
+          
+          $counter = 0
           
           while ($true) {
+              $counter++
               $isAlive = -not $process.HasExited
               
               if (-not $isAlive) {
+                  # Aynı portu zorla
                   $process = Start-BoreWithPort -Port $currentPort
-                  Start-Sleep -Seconds 5
+                  Start-Sleep -Seconds 4
                   
-                  $newPort = Get-BorePort -TimeoutSec 12
+                  $newPort = Get-BorePort -TimeoutSec 8
                   
-                  if ($newPort -ne $currentPort) {
+                  if ($newPort -and $newPort -ne $currentPort) {
+                      # Port değişti
+                      $currentPort = $newPort
+                      
+                      Write-Host ""
+                      Write-Host "==============================================="
+                      Write-Host "RDP CONNECTION INFO (PORT CHANGED)"
+                      Write-Host "==============================================="
+                      Write-Host "Address (Computer): bore.pub:$currentPort"
+                      Write-Host "Username:           SHACOV"
+                      Write-Host "Password:           MAZERUNNER-2027"
+                      Write-Host "==============================================="
+                      Write-Host ""
+                  }
+                  elseif (-not $newPort) {
                       if (-not $process.HasExited) {
                           Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
                       }
-                      Start-Sleep -Seconds 30
+                  }
+              }
+              else {
+                  # Her 1 saatte bir kısa bilgi (720 x 5 saniye = 3600 saniye)
+                  if ($counter % 720 -eq 0) {
+                      $time = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+                      Write-Host "[$time] Tunnel ACTIVE | Port: $currentPort"
                   }
               }
               
-              Start-Sleep -Seconds 60
+              Start-Sleep -Seconds 5
           }
 
       - name: Kapaninca Otomatik Yeniden Baslat
