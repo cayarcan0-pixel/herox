@@ -1,217 +1,253 @@
-name: Win11 Bore RDP Long
+
+name: MAZERUNNER AI - Dolphin + Bore
 
 on:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
-  rdp:
+  ai:
     runs-on: windows-2022
     timeout-minutes: 180
 
     steps:
-      - name: Enable RDP + Create User
-        run: |
-          Write-Host "=== 1. Enabling RDP ==="
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0 -Force
-          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name "UserAuthentication" -Value 0 -Force
-          Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-          
-          $svc = Get-Service TermService
-          if ($svc.Status -ne "Running") { Start-Service TermService }
-          Write-Host "RDP Enabled"
-
-          Write-Host "=== 2. Creating User ==="
-          $password = "MAZERUNNER-2027"
-          $securePass = ConvertTo-SecureString $password -AsPlainText -Force
-
-          if (Get-LocalUser -Name "SHACOV" -ErrorAction SilentlyContinue) {
-              Set-LocalUser -Name "SHACOV" -Password $securePass
-          } else {
-              New-LocalUser -Name "SHACOV" -Password $securePass -AccountNeverExpires -PasswordNeverExpires
-          }
-
-          Add-LocalGroupMember -Group "Administrators" -Member "SHACOV" -ErrorAction SilentlyContinue
-          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "SHACOV" -ErrorAction SilentlyContinue
-          Write-Host "User SHACOV ready"
-
-      - name: Download Bore + Fixed Port Tunnel
-        shell: powershell
-        run: |
-          Write-Host "=== 3. Downloading Bore ==="
-          
-          $boreDir = "C:\bore"
-          New-Item -ItemType Directory -Path $boreDir -Force | Out-Null
-          
-          $zipPath = "$boreDir\bore.zip"
-          $boreExe = "$boreDir\bore.exe"
-          
-          Invoke-WebRequest -Uri "https://github.com/ekzhang/bore/releases/download/v0.6.0/bore-v0.6.0-x86_64-pc-windows-msvc.zip" -OutFile $zipPath -UseBasicParsing
-          Expand-Archive -Path $zipPath -DestinationPath $boreDir -Force
-          
-          if (-not (Test-Path $boreExe)) {
-              Write-Host "ERROR: bore.exe not found!"
-              Get-ChildItem $boreDir -Recurse
-              exit 1
-          }
-          
-          Write-Host "bore.exe ready"
-          & $boreExe --version
-          
-          $logOut = "$boreDir\bore_out.log"
-          $logErr = "$boreDir\bore_err.log"
-          
-          function Start-BoreWithPort {
-              param([string]$Port)
-              
-              if (Test-Path $logOut) { Remove-Item $logOut -Force -ErrorAction SilentlyContinue }
-              if (Test-Path $logErr) { Remove-Item $logErr -Force -ErrorAction SilentlyContinue }
-              
-              $args = @("local", "3389", "--to", "bore.pub", "--port", $Port)
-              
-              $proc = Start-Process -FilePath $boreExe `
-                  -ArgumentList $args `
-                  -WorkingDirectory $boreDir `
-                  -RedirectStandardOutput $logOut `
-                  -RedirectStandardError $logErr `
-                  -NoNewWindow `
-                  -PassThru
-              
-              return $proc
-          }
-          
-          function Get-BorePort {
-              param([int]$TimeoutSec = 20)
-              
-              for ($i = 1; $i -le $TimeoutSec; $i++) {
-                  Start-Sleep -Seconds 1
-                  
-                  $outContent = ""
-                  $errContent = ""
-                  if (Test-Path $logOut) { $outContent = Get-Content $logOut -Raw -ErrorAction SilentlyContinue }
-                  if (Test-Path $logErr) { $errContent = Get-Content $logErr -Raw -ErrorAction SilentlyContinue }
-                  $combined = "$outContent`n$errContent"
-                  
-                  if ($combined -match "bore\.pub:(\d+)") {
-                      return $Matches[1]
-                  }
-              }
-              return $null
-          }
-          
-          # ========== Preferred Ports ==========
-          $PreferredPorts = @(
-                27895,
-                27896,
-                27897,
-                27898,
-                27899,
-                27900
-          )
-          
-          Write-Host ""
-          Write-Host "=== 4. Trying preferred ports ==="
-          
-          $currentPort = $null
-          $process = $null
-          
-          foreach ($p in $PreferredPorts) {
-              Write-Host "Trying preferred port: $p ..."
-              $proc = Start-BoreWithPort -Port $p
-              Start-Sleep -Seconds 5
-              
-              $found = Get-BorePort -TimeoutSec 8
-              
-              if ($found -eq $p) {
-                  Write-Host "SUCCESS: Locked preferred port $p"
-                  $currentPort = $p
-                  $process = $proc
-                  break
-              } else {
-                  if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
-                  Start-Sleep -Seconds 2
-              }
-          }
-          
-          if (-not $currentPort) {
-              Write-Host "ERROR: None of the preferred ports are available."
-              exit 1
-          }
-          
-          Write-Host ""
-          Write-Host "==============================================="
-          Write-Host "RDP CONNECTION INFO (LOCKED PORT)"
-          Write-Host "==============================================="
-          Write-Host "Address (Computer): bore.pub:$currentPort"
-          Write-Host "Username:           SHACOV"
-          Write-Host "Password:           MAZERUNNER-2027"
-          Write-Host "==============================================="
-          Write-Host ""
-          
-          # ========== Keep-Alive ==========
-          Write-Host "=== 5. Keep-Alive started ==="
-          
-          # İlk aktiflik mesajı (hemen)
-          $time = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-          Write-Host "[$time] Tunnel ACTIVE | Port: $currentPort"
-          
-          $counter = 0
-          
-          while ($true) {
-              $counter++
-              $isAlive = -not $process.HasExited
-              
-              if (-not $isAlive) {
-                  # Aynı portu zorla
-                  $process = Start-BoreWithPort -Port $currentPort
-                  Start-Sleep -Seconds 4
-                  
-                  $newPort = Get-BorePort -TimeoutSec 8
-                  
-                  if ($newPort -and $newPort -ne $currentPort) {
-                      # Port değişti
-                      $currentPort = $newPort
-                      
-                      Write-Host ""
-                      Write-Host "==============================================="
-                      Write-Host "RDP CONNECTION INFO (PORT CHANGED)"
-                      Write-Host "==============================================="
-                      Write-Host "Address (Computer): bore.pub:$currentPort"
-                      Write-Host "Username:           SHACOV"
-                      Write-Host "Password:           MAZERUNNER-2027"
-                      Write-Host "==============================================="
-                      Write-Host ""
-                  }
-                  elseif (-not $newPort) {
-                      if (-not $process.HasExited) {
-                          Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
-                      }
-                  }
-              }
-              else {
-                  # Her 1 saatte bir kısa bilgi (720 x 5 saniye = 3600 saniye)
-                  if ($counter % 720 -eq 0) {
-                      $time = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-                      Write-Host "[$time] Tunnel ACTIVE | Port: $currentPort"
-                  }
-              }
-              
-              Start-Sleep -Seconds 5
-          }
-
-      - name: Kapaninca Otomatik Yeniden Baslat
-        if: always()
-        shell: bash
+      - name: Prepare Environment
+        shell: pwsh
         env:
-          GH_TOKEN: ${{ secrets.RUNNER }}
+          AI_API_KEY: ${{ secrets.AI_API_KEY }}
         run: |
-          echo "Job bitti, workflow yeniden tetikleniyor..."
+          $ErrorActionPreference = "Stop"
 
-          WORKFLOW_FILE="deneme.yml"
+          if (-not $env:AI_API_KEY) {
+            throw "Add AI_API_KEY in GitHub Repository Secrets first."
+          }
 
-          curl -L \
-            -X POST \
-            -H "Accept: application/vnd.github+json" \
-            -H "Authorization: Bearer $GH_TOKEN" \
-            -H "X-GitHub-Api-Version: 2026-03-10" \
-            "https://api.github.com/repos/${{ github.repository }}/actions/workflows/${WORKFLOW_FILE}/dispatches" \
-            -d '{"ref":"${{ github.ref_name }}"}'
+          New-Item -ItemType Directory -Force C:\AI | Out-Null
+
+          Set-Content C:\AI\api-key.txt $env:AI_API_KEY
+
+          Write-Host "MAZERUNNER AI environment ready"
+
+      - name: Download llama.cpp
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $release = Invoke-RestMethod `
+            "https://api.github.com/repos/ggml-org/llama.cpp/releases/latest"
+
+          $asset = $release.assets |
+            Where-Object { $_.name -match 'bin-win-cpu-x64\.zip$' } |
+            Select-Object -First 1
+
+          if (-not $asset) {
+            throw "Windows CPU release not found"
+          }
+
+          Invoke-WebRequest $asset.browser_download_url `
+            -OutFile C:\AI\llama.zip
+
+          Expand-Archive C:\AI\llama.zip C:\AI\llama -Force
+
+          $exe = Get-ChildItem C:\AI\llama `
+            -Filter llama-server.exe -Recurse |
+            Select-Object -First 1
+
+          if (-not $exe) {
+            throw "llama-server.exe missing"
+          }
+
+          "LLAMA_EXE=$($exe.FullName)" >> $env:GITHUB_ENV
+
+          Write-Host "llama.cpp installed"
+
+      - name: Download Dolphin 8B
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          python -m pip install --upgrade huggingface_hub
+
+          $repo = "bartowski/Dolphin3.0-Llama3.1-8B-GGUF"
+          $file = "Dolphin3.0-Llama3.1-8B-Q4_K_M.gguf"
+
+          python -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id='$repo', filename='$file', local_dir='C:/AI/model')"
+
+          $model = "C:\AI\model\$file"
+
+          if (-not (Test-Path $model)) {
+            throw "Model download failed"
+          }
+
+          "MODEL=$model" >> $env:GITHUB_ENV
+
+          Write-Host "Dolphin model downloaded"
+
+      - name: Start AI Server
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $args = @(
+            "-m", $env:MODEL,
+            "--alias", "dolphin",
+            "--host", "127.0.0.1",
+            "--port", "8080",
+            "--ctx-size", "2048",
+            "--threads", "4",
+            "--api-key-file", "C:\AI\api-key.txt"
+          )
+
+          $ai = Start-Process `
+            -FilePath $env:LLAMA_EXE `
+            -ArgumentList $args `
+            -PassThru `
+            -NoNewWindow `
+            -RedirectStandardOutput C:\AI\ai.log `
+            -RedirectStandardError C:\AI\ai-error.log
+
+          $ready = $false
+
+          for ($i = 0; $i -lt 60; $i++) {
+            Start-Sleep -Seconds 5
+
+            if ($ai.HasExited) {
+              Get-Content C:\AI\ai-error.log
+              throw "AI server stopped"
+            }
+
+            try {
+              Invoke-RestMethod `
+                http://127.0.0.1:8080/health `
+                -TimeoutSec 5 | Out-Null
+
+              $ready = $true
+              break
+            }
+            catch {}
+          }
+
+          if (-not $ready) {
+            Get-Content C:\AI\ai-error.log -Tail 50
+            throw "AI startup timeout"
+          }
+
+          Write-Host "DOLPHIN AI READY"
+
+      - name: Download Bore
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $release = Invoke-RestMethod `
+            "https://api.github.com/repos/ekzhang/bore/releases/latest"
+
+          $asset = $release.assets |
+            Where-Object { $_.name -match 'x86_64-pc-windows-msvc\.zip$' } |
+            Select-Object -First 1
+
+          if (-not $asset) {
+            throw "Windows Bore release not found"
+          }
+
+          Invoke-WebRequest $asset.browser_download_url `
+            -OutFile C:\AI\bore.zip
+
+          Expand-Archive C:\AI\bore.zip C:\AI\bore -Force
+
+          $exe = Get-ChildItem C:\AI\bore `
+            -Filter bore.exe -Recurse |
+            Select-Object -First 1
+
+          if (-not $exe) {
+            throw "bore.exe missing"
+          }
+
+          "BORE_EXE=$($exe.FullName)" >> $env:GITHUB_ENV
+
+          Write-Host "Bore installed"
+
+      - name: Start Bore AI Tunnel
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $bore = Start-Process `
+            -FilePath $env:BORE_EXE `
+            -ArgumentList @(
+              "local",
+              "8080",
+              "--to",
+              "bore.pub"
+            ) `
+            -PassThru `
+            -NoNewWindow `
+            -RedirectStandardOutput C:\AI\bore.log `
+            -RedirectStandardError C:\AI\bore-error.log
+
+          $port = $null
+
+          for ($i = 0; $i -lt 30; $i++) {
+            Start-Sleep -Seconds 2
+
+            if ($bore.HasExited) {
+              Get-Content C:\AI\bore-error.log
+              throw "Bore tunnel stopped"
+            }
+
+            $logs = ""
+
+            if (Test-Path C:\AI\bore.log) {
+              $logs += Get-Content C:\AI\bore.log -Raw
+            }
+
+            if (Test-Path C:\AI\bore-error.log) {
+              $logs += Get-Content C:\AI\bore-error.log -Raw
+            }
+
+            if ($logs -match 'bore\.pub:(\d+)') {
+              $port = $Matches[1]
+              break
+            }
+          }
+
+          if (-not $port) {
+            Get-Content C:\AI\bore.log
+            Get-Content C:\AI\bore-error.log
+            throw "Bore public port not detected"
+          }
+
+          "BORE_PORT=$port" >> $env:GITHUB_ENV
+
+          Write-Host ""
+          Write-Host "===================================="
+          Write-Host "MAZERUNNER AI ONLINE"
+          Write-Host "===================================="
+          Write-Host "API HOST: bore.pub:$port"
+          Write-Host "API URL: http://bore.pub:$port/v1"
+          Write-Host "MODEL: dolphin"
+          Write-Host "LOCAL: http://127.0.0.1:8080/v1"
+          Write-Host "API KEY: GitHub Secret AI_API_KEY"
+          Write-Host "===================================="
+
+      - name: Keep AI And Bore Alive
+        shell: pwsh
+        run: |
+          Write-Host "MAZERUNNER AI ACTIVE"
+
+          while ($true) {
+            Start-Sleep -Seconds 30
+
+            try {
+              Invoke-RestMethod `
+                http://127.0.0.1:8080/health `
+                -TimeoutSec 10 | Out-Null
+            }
+            catch {
+              throw "AI server health check failed"
+            }
+
+            Write-Host "AI ACTIVE | $(Get-Date)"
+          }
