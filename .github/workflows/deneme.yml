@@ -1,5 +1,5 @@
 
-name: MAZERUNNER AI - Dolphin + Bore
+name: MAZERUNNER AI - Dolphin 8B + Bore
 
 on:
   workflow_dispatch:
@@ -13,241 +13,478 @@ jobs:
     timeout-minutes: 180
 
     steps:
-      - name: Prepare Environment
+
+      # ==========================================
+      # 1. PREPARE ENVIRONMENT
+      # ==========================================
+
+      - name: "01 - Prepare Environment"
         shell: pwsh
         env:
           AI_API_KEY: ${{ secrets.AI_API_KEY }}
         run: |
           $ErrorActionPreference = "Stop"
 
-          if (-not $env:AI_API_KEY) {
-            throw "Add AI_API_KEY in GitHub Repository Secrets first."
+          if ([string]::IsNullOrWhiteSpace($env:AI_API_KEY)) {
+              throw "AI_API_KEY secret is missing"
           }
 
           New-Item -ItemType Directory -Force C:\AI | Out-Null
 
-          Set-Content C:\AI\api-key.txt $env:AI_API_KEY
+          Set-Content C:\AI\api-key.txt `
+            -Value $env:AI_API_KEY `
+            -Encoding ascii -NoNewline
 
-          Write-Host "MAZERUNNER AI environment ready"
+          $drive = Get-PSDrive C
 
-      - name: Download llama.cpp
+          Write-Host "================================"
+          Write-Host "MAZERUNNER AI INITIALIZATION"
+          Write-Host "================================"
+          Write-Host "Free disk: $([math]::Round($drive.Free / 1GB, 2)) GB"
+
+          if ($drive.Free -lt 7GB) {
+              throw "Insufficient disk space"
+          }
+
+          python --version
+
+          python -m pip install requests
+
+          Write-Host "Environment ready"
+
+      # ==========================================
+      # 2. DOWNLOAD HELPER WITH PROGRESS
+      # ==========================================
+
+      - name: "02 - Create Download Manager"
+        shell: pwsh
+        run: |
+          @'
+          import requests
+          import sys
+          import os
+          import time
+
+          url, destination, label = sys.argv[1:4]
+
+          os.makedirs(os.path.dirname(destination), exist_ok=True)
+
+          for attempt in range(1, 4):
+              try:
+                  print(f"\n[{label}] Attempt {attempt}/3", flush=True)
+
+                  if os.path.exists(destination):
+                      os.remove(destination)
+
+                  start = time.time()
+                  last_report = start
+                  downloaded = 0
+
+                  with requests.get(
+                      url,
+                      stream=True,
+                      timeout=(30, 120),
+                      headers={"User-Agent": "MAZERUNNER-AI"}
+                  ) as response:
+
+                      response.raise_for_status()
+
+                      total = int(
+                          response.headers.get("content-length", 0)
+                      )
+
+                      with open(destination, "wb") as f:
+                          for chunk in response.iter_content(
+                              chunk_size=4 * 1024 * 1024
+                          ):
+                              if not chunk:
+                                  continue
+
+                              f.write(chunk)
+                              downloaded += len(chunk)
+
+                              now = time.time()
+
+                              if now - last_report >= 2:
+                                  elapsed = max(now - start, 0.1)
+                                  speed = downloaded / elapsed / 1024 / 1024
+
+                                  if total:
+                                      percent = downloaded / total * 100
+                                      remaining = max(total - downloaded, 0)
+                                      eta = remaining / max(downloaded / elapsed, 1)
+
+                                      print(
+                                          f"[{label}] "
+                                          f"{percent:.1f}% | "
+                                          f"{downloaded / 1024**2:.1f}/"
+                                          f"{total / 1024**2:.1f} MB | "
+                                          f"{speed:.2f} MB/s | "
+                                          f"ETA {eta / 60:.1f} min",
+                                          flush=True
+                                      )
+                                  else:
+                                      print(
+                                          f"[{label}] "
+                                          f"{downloaded / 1024**2:.1f} MB | "
+                                          f"{speed:.2f} MB/s",
+                                          flush=True
+                                      )
+
+                                  last_report = now
+
+                  if os.path.getsize(destination) == 0:
+                      raise RuntimeError("Downloaded file is empty")
+
+                  print(f"[{label}] DOWNLOAD COMPLETE", flush=True)
+                  sys.exit(0)
+
+              except Exception as e:
+                  print(f"[{label}] ERROR: {e}", flush=True)
+
+                  if attempt == 3:
+                      raise
+
+                  time.sleep(5)
+
+          '@ | Set-Content C:\AI\download.py -Encoding utf8
+
+          Write-Host "Download manager ready"
+
+      # ==========================================
+      # 3. DOWNLOAD LLAMA.CPP
+      # ==========================================
+
+      - name: "03 - Download llama.cpp"
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
 
+          Write-Host "Searching latest llama.cpp release..."
+
           $release = Invoke-RestMethod `
-            "https://api.github.com/repos/ggml-org/llama.cpp/releases/latest"
+            -Uri "https://api.github.com/repos/ggml-org/llama.cpp/releases/latest" `
+            -TimeoutSec 60 `
+            -Headers @{ "User-Agent" = "MAZERUNNER-AI" }
 
           $asset = $release.assets |
-            Where-Object { $_.name -match 'bin-win-cpu-x64\.zip$' } |
+            Where-Object {
+              $_.name -match 'bin-win-cpu-x64\.zip$'
+            } |
             Select-Object -First 1
 
           if (-not $asset) {
-            throw "Windows CPU release not found"
+              throw "Windows CPU release not found"
           }
 
-          Invoke-WebRequest $asset.browser_download_url `
-            -OutFile C:\AI\llama.zip
+          Write-Host "Selected: $($asset.name)"
 
-          Expand-Archive C:\AI\llama.zip C:\AI\llama -Force
+          python -u C:\AI\download.py `
+            $asset.browser_download_url `
+            C:\AI\llama.zip `
+            "LLAMA.CPP"
+
+          if ($LASTEXITCODE -ne 0) {
+              throw "llama.cpp download failed"
+          }
+
+          Write-Host "Extracting llama.cpp..."
+
+          Expand-Archive `
+            C:\AI\llama.zip `
+            C:\AI\llama `
+            -Force
 
           $exe = Get-ChildItem C:\AI\llama `
             -Filter llama-server.exe -Recurse |
             Select-Object -First 1
 
           if (-not $exe) {
-            throw "llama-server.exe missing"
+              throw "llama-server.exe not found"
           }
 
           "LLAMA_EXE=$($exe.FullName)" >> $env:GITHUB_ENV
 
-          Write-Host "llama.cpp installed"
+          Write-Host "LLAMA.CPP INSTALLED"
 
-      - name: Download Dolphin 8B
+      # ==========================================
+      # 4. DOWNLOAD DOLPHIN MODEL
+      # ==========================================
+
+      - name: "04 - Download Dolphin 8B Q4"
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-
-          python -m pip install --upgrade huggingface_hub
 
           $repo = "bartowski/Dolphin3.0-Llama3.1-8B-GGUF"
+
           $file = "Dolphin3.0-Llama3.1-8B-Q4_K_M.gguf"
 
-          python -c "from huggingface_hub import hf_hub_download; hf_hub_download(repo_id='$repo', filename='$file', local_dir='C:/AI/model')"
+          $url = "https://huggingface.co/$repo/resolve/main/$file?download=true"
 
-          $model = "C:\AI\model\$file"
+          Write-Host "================================"
+          Write-Host "DOWNLOADING DOLPHIN 8B"
+          Write-Host "Quantization: Q4_K_M"
+          Write-Host "================================"
 
-          if (-not (Test-Path $model)) {
-            throw "Model download failed"
+          New-Item -ItemType Directory -Force C:\AI\model | Out-Null
+
+          python -u C:\AI\download.py `
+            $url `
+            "C:\AI\model\$file" `
+            "DOLPHIN MODEL"
+
+          if ($LASTEXITCODE -ne 0) {
+              throw "Dolphin model download failed"
           }
 
-          "MODEL=$model" >> $env:GITHUB_ENV
+          if (-not (Test-Path "C:\AI\model\$file")) {
+              throw "Model file missing"
+          }
 
-          Write-Host "Dolphin model downloaded"
+          "MODEL=C:\AI\model\$file" >> $env:GITHUB_ENV
 
-      - name: Start AI Server
+          Write-Host "DOLPHIN MODEL INSTALLED"
+
+      # ==========================================
+      # 5. START AI API
+      # ==========================================
+
+      - name: "05 - Start Dolphin AI"
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
 
+          Write-Host "Starting Dolphin AI server..."
+
           $args = @(
-            "-m", $env:MODEL,
-            "--alias", "dolphin",
-            "--host", "127.0.0.1",
-            "--port", "8080",
-            "--ctx-size", "2048",
-            "--threads", "4",
-            "--api-key-file", "C:\AI\api-key.txt"
+              "-m", $env:MODEL,
+              "--host", "127.0.0.1",
+              "--port", "8080",
+              "--alias", "dolphin",
+              "--ctx-size", "2048",
+              "--threads", "4",
+              "--batch-size", "128",
+              "--api-key-file", "C:\AI\api-key.txt"
           )
 
-          $ai = Start-Process `
-            -FilePath $env:LLAMA_EXE `
-            -ArgumentList $args `
-            -PassThru `
-            -NoNewWindow `
-            -RedirectStandardOutput C:\AI\ai.log `
-            -RedirectStandardError C:\AI\ai-error.log
+          $process = Start-Process `
+              -FilePath $env:LLAMA_EXE `
+              -ArgumentList $args `
+              -PassThru `
+              -NoNewWindow `
+              -RedirectStandardOutput C:\AI\ai.log `
+              -RedirectStandardError C:\AI\ai-error.log
 
           $ready = $false
 
-          for ($i = 0; $i -lt 60; $i++) {
-            Start-Sleep -Seconds 5
+          for ($i = 1; $i -le 120; $i++) {
 
-            if ($ai.HasExited) {
-              Get-Content C:\AI\ai-error.log
-              throw "AI server stopped"
-            }
+              Start-Sleep -Seconds 5
 
-            try {
-              Invoke-RestMethod `
-                http://127.0.0.1:8080/health `
-                -TimeoutSec 5 | Out-Null
+              if ($process.HasExited) {
+                  Get-Content C:\AI\ai-error.log -Tail 60
+                  throw "AI process exited"
+              }
 
-              $ready = $true
-              break
-            }
-            catch {}
+              try {
+                  $headers = @{
+                      Authorization = "Bearer $env:AI_API_KEY"
+                  }
+
+                  Invoke-RestMethod `
+                      -Uri "http://127.0.0.1:8080/v1/models" `
+                      -Headers $headers `
+                      -TimeoutSec 10 | Out-Null
+
+                  $ready = $true
+                  break
+              }
+              catch {}
+
+              if ($i % 6 -eq 0) {
+                  Write-Host "AI initializing... $i/120"
+              }
           }
 
           if (-not $ready) {
-            Get-Content C:\AI\ai-error.log -Tail 50
-            throw "AI startup timeout"
+              Get-Content C:\AI\ai-error.log -Tail 60
+              throw "AI startup timeout"
           }
 
           Write-Host "DOLPHIN AI READY"
+          Write-Host "LOCAL API: http://127.0.0.1:8080/v1"
 
-      - name: Download Bore
+      # ==========================================
+      # 6. DOWNLOAD BORE
+      # ==========================================
+
+      - name: "06 - Download Bore"
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
 
+          Write-Host "Searching Bore release..."
+
           $release = Invoke-RestMethod `
-            "https://api.github.com/repos/ekzhang/bore/releases/latest"
+              -Uri "https://api.github.com/repos/ekzhang/bore/releases/latest" `
+              -TimeoutSec 60 `
+              -Headers @{ "User-Agent" = "MAZERUNNER-AI" }
 
           $asset = $release.assets |
-            Where-Object { $_.name -match 'x86_64-pc-windows-msvc\.zip$' } |
-            Select-Object -First 1
+              Where-Object {
+                  $_.name -match 'x86_64-pc-windows-msvc\.zip$'
+              } |
+              Select-Object -First 1
 
           if (-not $asset) {
-            throw "Windows Bore release not found"
+              throw "Bore Windows release not found"
           }
 
-          Invoke-WebRequest $asset.browser_download_url `
-            -OutFile C:\AI\bore.zip
+          Write-Host "Selected: $($asset.name)"
+
+          python -u C:\AI\download.py `
+              $asset.browser_download_url `
+              C:\AI\bore.zip `
+              "BORE"
+
+          if ($LASTEXITCODE -ne 0) {
+              throw "Bore download failed"
+          }
 
           Expand-Archive C:\AI\bore.zip C:\AI\bore -Force
 
           $exe = Get-ChildItem C:\AI\bore `
-            -Filter bore.exe -Recurse |
-            Select-Object -First 1
+              -Filter bore.exe -Recurse |
+              Select-Object -First 1
 
           if (-not $exe) {
-            throw "bore.exe missing"
+              throw "bore.exe not found"
           }
 
           "BORE_EXE=$($exe.FullName)" >> $env:GITHUB_ENV
 
-          Write-Host "Bore installed"
+          Write-Host "BORE INSTALLED"
 
-      - name: Start Bore AI Tunnel
+      # ==========================================
+      # 7. START BORE TUNNEL
+      # ==========================================
+
+      - name: "07 - Publish AI Through Bore"
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
 
+          Write-Host "Starting Bore tunnel..."
+
           $bore = Start-Process `
-            -FilePath $env:BORE_EXE `
-            -ArgumentList @(
-              "local",
-              "8080",
-              "--to",
-              "bore.pub"
-            ) `
-            -PassThru `
-            -NoNewWindow `
-            -RedirectStandardOutput C:\AI\bore.log `
-            -RedirectStandardError C:\AI\bore-error.log
+              -FilePath $env:BORE_EXE `
+              -ArgumentList @(
+                  "local",
+                  "8080",
+                  "--to",
+                  "bore.pub"
+              ) `
+              -PassThru `
+              -NoNewWindow `
+              -RedirectStandardOutput C:\AI\bore.log `
+              -RedirectStandardError C:\AI\bore-error.log
 
           $port = $null
 
-          for ($i = 0; $i -lt 30; $i++) {
-            Start-Sleep -Seconds 2
+          for ($i = 1; $i -le 60; $i++) {
 
-            if ($bore.HasExited) {
-              Get-Content C:\AI\bore-error.log
-              throw "Bore tunnel stopped"
-            }
+              Start-Sleep -Seconds 2
 
-            $logs = ""
+              if ($bore.HasExited) {
+                  Get-Content C:\AI\bore-error.log -Tail 40
+                  throw "Bore process exited"
+              }
 
-            if (Test-Path C:\AI\bore.log) {
-              $logs += Get-Content C:\AI\bore.log -Raw
-            }
+              $logs = ""
 
-            if (Test-Path C:\AI\bore-error.log) {
-              $logs += Get-Content C:\AI\bore-error.log -Raw
-            }
+              if (Test-Path C:\AI\bore.log) {
+                  $logs += Get-Content C:\AI\bore.log -Raw
+              }
 
-            if ($logs -match 'bore\.pub:(\d+)') {
-              $port = $Matches[1]
-              break
-            }
+              if (Test-Path C:\AI\bore-error.log) {
+                  $logs += Get-Content C:\AI\bore-error.log -Raw
+              }
+
+              if ($logs -match 'bore\.pub:(\d+)') {
+                  $port = $Matches[1]
+                  break
+              }
+
+              if ($i % 10 -eq 0) {
+                  Write-Host "Waiting for Bore... $i/60"
+              }
           }
 
           if (-not $port) {
-            Get-Content C:\AI\bore.log
-            Get-Content C:\AI\bore-error.log
-            throw "Bore public port not detected"
+              Get-Content C:\AI\bore.log -Tail 40
+              Get-Content C:\AI\bore-error.log -Tail 40
+              throw "Bore public port not detected"
           }
 
           "BORE_PORT=$port" >> $env:GITHUB_ENV
 
           Write-Host ""
-          Write-Host "===================================="
-          Write-Host "MAZERUNNER AI ONLINE"
-          Write-Host "===================================="
-          Write-Host "API HOST: bore.pub:$port"
+          Write-Host "========================================"
+          Write-Host "       MAZERUNNER AI ONLINE"
+          Write-Host "========================================"
+          Write-Host "PUBLIC HOST: bore.pub:$port"
           Write-Host "API URL: http://bore.pub:$port/v1"
           Write-Host "MODEL: dolphin"
-          Write-Host "LOCAL: http://127.0.0.1:8080/v1"
-          Write-Host "API KEY: GitHub Secret AI_API_KEY"
-          Write-Host "===================================="
+          Write-Host "LOCAL API: 127.0.0.1:8080/v1"
+          Write-Host "========================================"
 
-      - name: Keep AI And Bore Alive
+      # ==========================================
+      # 8. HEALTH MONITOR
+      # ==========================================
+
+      - name: "08 - AI + Bore Monitor"
         shell: pwsh
         run: |
-          Write-Host "MAZERUNNER AI ACTIVE"
+          $ErrorActionPreference = "Stop"
+
+          $headers = @{
+              Authorization = "Bearer $env:AI_API_KEY"
+          }
+
+          Write-Host "================================"
+          Write-Host "MAZERUNNER AI MONITOR ACTIVE"
+          Write-Host "================================"
+
+          $counter = 0
 
           while ($true) {
-            Start-Sleep -Seconds 30
 
-            try {
-              Invoke-RestMethod `
-                http://127.0.0.1:8080/health `
-                -TimeoutSec 10 | Out-Null
-            }
-            catch {
-              throw "AI server health check failed"
-            }
+              Start-Sleep -Seconds 30
 
-            Write-Host "AI ACTIVE | $(Get-Date)"
+              $counter++
+
+              if ($counter % 2 -eq 0) {
+
+                  try {
+                      Invoke-RestMethod `
+                          -Uri "http://127.0.0.1:8080/v1/models" `
+                          -Headers $headers `
+                          -TimeoutSec 15 | Out-Null
+                  }
+                  catch {
+                      throw "AI API health check failed"
+                  }
+
+                  if ($counter % 4 -eq 0) {
+
+                      $boreProcess = Get-Process bore -ErrorAction SilentlyContinue
+
+                      if (-not $boreProcess) {
+                          throw "Bore tunnel process stopped"
+                      }
+                  }
+
+                  Write-Host "[$(Get-Date -Format 'HH:mm:ss')] AI ACTIVE | BORE ACTIVE | PORT $env:BORE_PORT"
+              }
           }
