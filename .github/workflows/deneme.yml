@@ -85,7 +85,6 @@ jobs:
                               f.write(chunk)
                               downloaded += len(chunk)
                               now = time.time()
-                              # Sadece 15 saniyede bir log bas
                               if now - last_report >= 15:
                                   elapsed = max(now - start, 0.1)
                                   speed = downloaded / elapsed / 1024 / 1024
@@ -233,7 +232,7 @@ jobs:
           Write-Host "BORE READY"
 
       # ==========================================
-      # 7. START BORE (SABİT PORTLAR)
+      # 7. START BORE (SABİT PORTLAR + DOĞRULAMA)
       # ==========================================
       - name: "07 - Publish with Fixed Ports"
         shell: pwsh
@@ -241,17 +240,20 @@ jobs:
           $ErrorActionPreference = "Stop"
           Write-Host "Starting Bore with fixed ports..."
 
-          $ports = @(22889, 22888, 22887, 22886, 22885)
+          $ports = @(31322, 31323, 31324, 31325, 31326, 31327)
           $selectedPort = $null
           $boreProcess = $null
 
           foreach ($port in $ports) {
               Write-Host "Trying port $port ..."
 
-              # Önceki process varsa öldür
               if ($boreProcess -and -not $boreProcess.HasExited) {
                   Stop-Process -Id $boreProcess.Id -Force -ErrorAction SilentlyContinue
+                  Start-Sleep -Seconds 2
               }
+
+              Remove-Item C:\AI\bore.log -Force -ErrorAction SilentlyContinue
+              Remove-Item C:\AI\bore-error.log -Force -ErrorAction SilentlyContinue
 
               $boreProcess = Start-Process -FilePath $env:BORE_EXE `
                   -ArgumentList @("local", "8080", "--to", "bore.pub", "--port", "$port") `
@@ -259,41 +261,42 @@ jobs:
                   -RedirectStandardOutput C:\AI\bore.log `
                   -RedirectStandardError C:\AI\bore-error.log
 
-              Start-Sleep -Seconds 4
+              Start-Sleep -Seconds 5
 
               if ($boreProcess.HasExited) {
                   Write-Host "Port $port failed (process exited)"
+                  Get-Content C:\AI\bore-error.log -Tail 10 -ErrorAction SilentlyContinue
                   continue
               }
 
-              # Logdan başarı kontrolü
-              $logs = ""
-              if (Test-Path C:\AI\bore.log) { $logs += Get-Content C:\AI\bore.log -Raw -ErrorAction SilentlyContinue }
-              if (Test-Path C:\AI\bore-error.log) { $logs += Get-Content C:\AI\bore-error.log -Raw -ErrorAction SilentlyContinue }
+              # GERÇEK DOĞRULAMA: bore.pub:PORT üzerinden HTTP isteği (web UI)
+              $verified = $false
+              for ($try = 1; $try -le 6; $try++) {
+                  try {
+                      $resp = Invoke-WebRequest -Uri "http://bore.pub:$port" -TimeoutSec 15 -UseBasicParsing -ErrorAction Stop
+                      if ($resp.StatusCode -ge 200 -and $resp.StatusCode -lt 400) {
+                          $verified = $true
+                          break
+                      }
+                  } catch {
+                      Write-Host "  verify attempt $try failed: $($_.Exception.Message)"
+                      Start-Sleep -Seconds 5
+                  }
+              }
 
-              if ($logs -match "bore\.pub:$port" -or $logs -match "listening on.*$port") {
+              if ($verified) {
                   $selectedPort = $port
-                  Write-Host "SUCCESS → Port $port alındı"
+                  Write-Host "SUCCESS -> Port $port DOGRULANDI (http://bore.pub:$port erisilebilir)"
                   break
               }
 
-              # 8 saniye daha bekle
-              Start-Sleep -Seconds 6
-              $logs = ""
-              if (Test-Path C:\AI\bore.log) { $logs += Get-Content C:\AI\bore.log -Raw -ErrorAction SilentlyContinue }
-              if ($logs -match "bore\.pub:$port") {
-                  $selectedPort = $port
-                  Write-Host "SUCCESS → Port $port alındı"
-                  break
-              }
-
-              Write-Host "Port $port meşgul, sonraki deneniyor..."
+              Write-Host "Port $port mesgul veya baglanamadi, sonraki deneniyor..."
           }
 
           if (-not $selectedPort) {
               Get-Content C:\AI\bore.log -Tail 30 -ErrorAction SilentlyContinue
               Get-Content C:\AI\bore-error.log -Tail 30 -ErrorAction SilentlyContinue
-              throw "Hiçbir sabit port alınamadı (22889-22885)"
+              throw "Hicbir sabit port alinamadi (31322-31327)"
           }
 
           "BORE_PORT=$selectedPort" >> $env:GITHUB_ENV
@@ -303,9 +306,8 @@ jobs:
           Write-Host "       MAZERUNNER AI ONLINE"
           Write-Host "========================================"
           Write-Host "BROWSER URL : http://bore.pub:$selectedPort"
-          Write-Host "API URL     : http://bore.pub:$selectedPort/v1"
-          Write-Host "MODEL       : MAZERUNNER-AI"
           Write-Host "========================================"
+          Write-Host "Port DOGRULANDI, tarayicidan acabilirsin"
 
       # ==========================================
       # 8. QUIET MONITOR (log çok az)
@@ -324,7 +326,6 @@ jobs:
               Start-Sleep -Seconds 60
               $counter++
 
-              # Her 5 dakikada bir log + health check
               if ($counter % 5 -eq 0) {
                   try {
                       Invoke-RestMethod -Uri "http://127.0.0.1:8080/v1/models" -Headers $headers -TimeoutSec 12 | Out-Null
@@ -351,7 +352,7 @@ jobs:
           GH_TOKEN: ${{ secrets.RUNNER }}
         run: |
           echo "Job ended, restarting workflow..."
-          WORKFLOW_FILE="ai.yml"   # ← Kendi dosya adını yaz
+          WORKFLOW_FILE="ai.yml"
 
           curl -L -X POST \
             -H "Accept: application/vnd.github+json" \
