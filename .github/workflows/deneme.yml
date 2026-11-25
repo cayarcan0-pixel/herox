@@ -142,9 +142,9 @@ jobs:
           Write-Host "LLAMA.CPP READY"
 
       # ==========================================
-      # 4. DOWNLOAD DOLPHIN MODEL
+      # 4. DOWNLOAD DOLPHIN MODEL + BORE
       # ==========================================
-      - name: "04 - Download Dolphin 8B"
+      - name: "04 - Download Model + Bore"
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
@@ -161,62 +161,7 @@ jobs:
           "MODEL=C:\AI\model\$file" >> $env:GITHUB_ENV
           Write-Host "DOLPHIN MODEL READY"
 
-      # ==========================================
-      # 5. START AI + WEB UI
-      # ==========================================
-      - name: "05 - Start MAZERUNNER AI"
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          Write-Host "Starting MAZERUNNER AI + Web UI..."
-
-          $apiKey = $env:AI_API_KEY.Trim() -replace "[\r\n]", ""
-
-          $args = @(
-              "-m", $env:MODEL,
-              "--host", "127.0.0.1",
-              "--port", "8080",
-              "--alias", "MAZERUNNER-AI",
-              "--ctx-size", "4096",
-              "--threads", "4",
-              "--batch-size", "128",
-              "--api-key", $apiKey
-          )
-
-          $process = Start-Process -FilePath $env:LLAMA_EXE -ArgumentList $args -PassThru -NoNewWindow `
-              -RedirectStandardOutput C:\AI\ai.log -RedirectStandardError C:\AI\ai-error.log
-
-          $ready = $false
-          for ($i = 1; $i -le 90; $i++) {
-              Start-Sleep -Seconds 6
-              if ($process.HasExited) {
-                  Get-Content C:\AI\ai-error.log -Tail 40
-                  throw "AI process exited"
-              }
-              try {
-                  $headers = @{ Authorization = "Bearer $apiKey" }
-                  Invoke-RestMethod -Uri "http://127.0.0.1:8080/v1/models" -Headers $headers -TimeoutSec 8 | Out-Null
-                  $ready = $true
-                  break
-              } catch {}
-          }
-
-          if (-not $ready) {
-              Get-Content C:\AI\ai-error.log -Tail 50
-              throw "AI startup timeout"
-          }
-
-          Write-Host "MAZERUNNER AI READY + WEB UI ACTIVE"
-
-      # ==========================================
-      # 6. DOWNLOAD BORE
-      # ==========================================
-      - name: "06 - Download Bore"
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
           Write-Host "Downloading Bore..."
-
           $release = Invoke-RestMethod -Uri "https://api.github.com/repos/ekzhang/bore/releases/latest" -TimeoutSec 60 -Headers @{ "User-Agent" = "MAZERUNNER-AI" }
           $asset = $release.assets | Where-Object { $_.name -match 'x86_64-pc-windows-msvc\.zip$' } | Select-Object -First 1
           if (-not $asset) { throw "Bore Windows release not found" }
@@ -232,75 +177,100 @@ jobs:
           Write-Host "BORE READY"
 
       # ==========================================
-      # 7. START BORE (SABİT PORTLAR + TUNNEL ACTIVE)
+      # 5. START AI + BORE (TEK KEEP-ALIVE DÖNGÜSÜ)
       # ==========================================
-      - name: "07 - Publish with Fixed Ports"
+      - name: "05 - Start AI + Bore (Unified Keep-Alive)"
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          Write-Host "Starting Bore with fixed ports..."
+          Write-Host "Starting MAZERUNNER AI + Bore (unified)..."
 
-          $logOut = "C:\AI\bore.log"
-          $logErr = "C:\AI\bore-error.log"
+          $apiKey = $env:AI_API_KEY.Trim() -replace "[\r\n]", ""
 
+          $aiOut  = "C:\AI\ai.log"
+          $aiErr  = "C:\AI\ai-error.log"
+          $boreOut = "C:\AI\bore.log"
+          $boreErr = "C:\AI\bore-error.log"
+
+          # ---------- AI START ----------
+          function Start-AI {
+              $aiArgs = @(
+                  "-m", $env:MODEL,
+                  "--host", "127.0.0.1",
+                  "--port", "8080",
+                  "--alias", "MAZERUNNER-AI",
+                  "--ctx-size", "4096",
+                  "--threads", "4",
+                  "--batch-size", "128",
+                  "--api-key", $apiKey
+              )
+              return Start-Process -FilePath $env:LLAMA_EXE -ArgumentList $aiArgs -PassThru -NoNewWindow `
+                  -RedirectStandardOutput $aiOut -RedirectStandardError $aiErr
+          }
+
+          Write-Host "Starting AI server..."
+          $aiProcess = Start-AI
+
+          # AI hazır olana kadar bekle
+          $aiReady = $false
+          for ($i = 1; $i -le 90; $i++) {
+              Start-Sleep -Seconds 6
+              if ($aiProcess.HasExited) {
+                  Get-Content $aiErr -Tail 40
+                  throw "AI process exited during startup"
+              }
+              try {
+                  $headers = @{ Authorization = "Bearer $apiKey" }
+                  Invoke-RestMethod -Uri "http://127.0.0.1:8080/v1/models" -Headers $headers -TimeoutSec 8 | Out-Null
+                  $aiReady = $true
+                  break
+              } catch {}
+          }
+          if (-not $aiReady) {
+              Get-Content $aiErr -Tail 50
+              throw "AI startup timeout"
+          }
+          Write-Host "AI READY"
+
+          # ---------- BORE START ----------
           function Start-BoreWithPort {
               param([string]$Port)
-
-              if (Test-Path $logOut) { Remove-Item $logOut -Force -ErrorAction SilentlyContinue }
-              if (Test-Path $logErr) { Remove-Item $logErr -Force -ErrorAction SilentlyContinue }
-
-              $args = @("local", "8080", "--to", "bore.pub", "--port", $Port)
-
-              $proc = Start-Process -FilePath $env:BORE_EXE `
-                  -ArgumentList $args `
-                  -WorkingDirectory "C:\AI" `
-                  -RedirectStandardOutput $logOut `
-                  -RedirectStandardError $logErr `
-                  -NoNewWindow `
-                  -PassThru
-
-              return $proc
+              if (Test-Path $boreOut) { Remove-Item $boreOut -Force -ErrorAction SilentlyContinue }
+              if (Test-Path $boreErr) { Remove-Item $boreErr -Force -ErrorAction SilentlyContinue }
+              $bArgs = @("local", "8080", "--to", "bore.pub", "--port", $Port)
+              return Start-Process -FilePath $env:BORE_EXE -ArgumentList $bArgs -WorkingDirectory "C:\AI" `
+                  -RedirectStandardOutput $boreOut -RedirectStandardError $boreErr -NoNewWindow -PassThru
           }
 
           function Get-BorePort {
               param([int]$TimeoutSec = 20)
-
               for ($i = 1; $i -le $TimeoutSec; $i++) {
                   Start-Sleep -Seconds 1
-
                   $outContent = ""
                   $errContent = ""
-                  if (Test-Path $logOut) { $outContent = Get-Content $logOut -Raw -ErrorAction SilentlyContinue }
-                  if (Test-Path $logErr) { $errContent = Get-Content $logErr -Raw -ErrorAction SilentlyContinue }
+                  if (Test-Path $boreOut) { $outContent = Get-Content $boreOut -Raw -ErrorAction SilentlyContinue }
+                  if (Test-Path $boreErr) { $errContent = Get-Content $boreErr -Raw -ErrorAction SilentlyContinue }
                   $combined = "$outContent`n$errContent"
-
-                  if ($combined -match "bore\.pub:(\d+)") {
-                      return $Matches[1]
-                  }
+                  if ($combined -match "bore\.pub:(\d+)") { return $Matches[1] }
               }
               return $null
           }
 
-          # ========== Preferred Ports ==========
           $PreferredPorts = @(31322, 31323, 31324, 31325, 31326, 31327)
-
-          Write-Host ""
           Write-Host "=== Trying preferred ports ==="
 
           $currentPort = $null
-          $process = $null
+          $boreProcess = $null
 
           foreach ($p in $PreferredPorts) {
               Write-Host "Trying preferred port: $p ..."
               $proc = Start-BoreWithPort -Port $p
               Start-Sleep -Seconds 5
-
               $found = Get-BorePort -TimeoutSec 8
-
               if ($found -eq $p) {
                   Write-Host "SUCCESS: Locked preferred port $p"
                   $currentPort = $p
-                  $process = $proc
+                  $boreProcess = $proc
                   break
               } else {
                   if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
@@ -309,45 +279,58 @@ jobs:
           }
 
           if (-not $currentPort) {
-              Get-Content $logOut -Tail 20 -ErrorAction SilentlyContinue
-              Get-Content $logErr -Tail 20 -ErrorAction SilentlyContinue
+              Get-Content $boreOut -Tail 20 -ErrorAction SilentlyContinue
+              Get-Content $boreErr -Tail 20 -ErrorAction SilentlyContinue
               throw "None of the preferred ports are available (31322-31327)"
           }
-
-          "BORE_PORT=$currentPort" >> $env:GITHUB_ENV
 
           Write-Host ""
           Write-Host "==============================================="
           Write-Host "MAZERUNNER AI WEB UI (LOCKED PORT)"
           Write-Host "==============================================="
           Write-Host "Browser URL : http://bore.pub:$currentPort"
+          Write-Host "API Key     : (secret AI_API_KEY)"
           Write-Host "==============================================="
           Write-Host ""
 
-          # ========== Keep-Alive ==========
-          Write-Host "=== Keep-Alive started ==="
-
+          # ---------- UNIFIED KEEP-ALIVE ----------
+          Write-Host "=== Keep-Alive started (AI + Bore birlikte) ==="
           $time = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
           Write-Host "[$time] Tunnel ACTIVE | Port: $currentPort | URL: http://bore.pub:$currentPort"
 
           $counter = 0
-
           while ($true) {
               $counter++
-              $isAlive = -not $process.HasExited
 
-              if (-not $isAlive) {
-                  $process = Start-BoreWithPort -Port $currentPort
+              # --- AI kontrol ---
+              if ($aiProcess.HasExited) {
+                  Write-Host "AI process died, restarting..."
+                  $aiProcess = Start-AI
+                  Start-Sleep -Seconds 8
+                  $aiReady = $false
+                  for ($i = 1; $i -le 30; $i++) {
+                      Start-Sleep -Seconds 4
+                      if ($aiProcess.HasExited) { break }
+                      try {
+                          $headers = @{ Authorization = "Bearer $apiKey" }
+                          Invoke-RestMethod -Uri "http://127.0.0.1:8080/v1/models" -Headers $headers -TimeoutSec 8 | Out-Null
+                          $aiReady = $true
+                          break
+                      } catch {}
+                  }
+                  if ($aiReady) { Write-Host "AI restarted OK" } else { Write-Host "AI restart failed" }
+              }
+
+              # --- Bore kontrol ---
+              if ($boreProcess.HasExited) {
+                  Write-Host "Bore process died, restarting..."
+                  $boreProcess = Start-BoreWithPort -Port $currentPort
                   Start-Sleep -Seconds 4
-
                   $newPort = Get-BorePort -TimeoutSec 8
-
                   if ($newPort) {
                       if ($newPort -ne $currentPort) {
                           $currentPort = $newPort
-                          "BORE_PORT=$currentPort" >> $env:GITHUB_ENV
                       }
-
                       $time = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
                       Write-Host ""
                       Write-Host "==============================================="
@@ -357,35 +340,26 @@ jobs:
                       Write-Host "==============================================="
                       Write-Host "[$time] Tunnel ACTIVE | Port: $currentPort | URL: http://bore.pub:$currentPort"
                       Write-Host ""
-                  }
-                  else {
-                      if (-not $process.HasExited) {
-                          Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+                  } else {
+                      if (-not $boreProcess.HasExited) {
+                          Stop-Process -Id $boreProcess.Id -Force -ErrorAction SilentlyContinue
                       }
                   }
               }
-              else {
-                  if ($counter % 720 -eq 0) {
-                      $time = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
-                      Write-Host "[$time] Tunnel ACTIVE | Port: $currentPort | URL: http://bore.pub:$currentPort"
-                  }
+
+              # --- Her saat başı durum ---
+              if ($counter % 720 -eq 0) {
+                  $time = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+                  Write-Host "[$time] Tunnel ACTIVE | Port: $currentPort | URL: http://bore.pub:$currentPort"
               }
 
               Start-Sleep -Seconds 5
           }
 
       # ==========================================
-      # 8. QUIET MONITOR (yedek)
+      # 6. AUTO RESTART
       # ==========================================
-      - name: "08 - Quiet Monitor"
-        shell: pwsh
-        run: |
-          Write-Host "Monitor placeholder (7. step keep-alive calisiyor)"
-
-      # ==========================================
-      # 9. AUTO RESTART
-      # ==========================================
-      - name: "09 - Auto Restart"
+      - name: "06 - Auto Restart"
         if: always()
         shell: bash
         env:
