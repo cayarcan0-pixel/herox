@@ -220,7 +220,7 @@ jobs:
           Write-Host "LLAMA.CPP INSTALLED"
 
       # ==========================================
-      # 4. DOWNLOAD DOLPHIN MODEL
+      # 4. DOWNLOAD DOLPHIN MODEL  (DÜZELTİLDİ)
       # ==========================================
 
       - name: "04 - Download Dolphin 8B Q4"
@@ -229,10 +229,10 @@ jobs:
           $ErrorActionPreference = "Stop"
 
           $repo = "bartowski/Dolphin3.0-Llama3.1-8B-GGUF"
-
           $file = "Dolphin3.0-Llama3.1-8B-Q4_K_M.gguf"
 
-          $url = "https://huggingface.co/$repo/resolve/main/$file?download=true"
+          # ?download=true KALDIRILDI
+          $url = "https://huggingface.co/$repo/resolve/main/$file"
 
           Write-Host "================================"
           Write-Host "DOWNLOADING DOLPHIN 8B"
@@ -241,8 +241,9 @@ jobs:
 
           New-Item -ItemType Directory -Force C:\AI\model | Out-Null
 
+          # URL tırnak içinde
           python -u C:\AI\download.py `
-            $url `
+            "$url" `
             "C:\AI\model\$file" `
             "DOLPHIN MODEL"
 
