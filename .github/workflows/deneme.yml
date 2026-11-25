@@ -28,10 +28,14 @@ jobs:
               throw "AI_API_KEY secret is missing"
           }
 
+          $cleanKey = $env:AI_API_KEY.Trim() -replace "[\r\n]", ""
+
+          Write-Host "Key length: $($cleanKey.Length)"
+
           New-Item -ItemType Directory -Force C:\AI | Out-Null
 
           Set-Content C:\AI\api-key.txt `
-            -Value $env:AI_API_KEY `
+            -Value $cleanKey `
             -Encoding ascii -NoNewline
 
           $drive = Get-PSDrive C
@@ -255,7 +259,7 @@ jobs:
           Write-Host "DOLPHIN MODEL INSTALLED"
 
       # ==========================================
-      # 5. START AI API
+      # 5. START AI API  (DÜZELTİLDİ: --api-key)
       # ==========================================
 
       - name: "05 - Start Dolphin AI"
@@ -265,6 +269,8 @@ jobs:
 
           Write-Host "Starting Dolphin AI server..."
 
+          $apiKey = $env:AI_API_KEY.Trim() -replace "[\r\n]", ""
+
           $args = @(
               "-m", $env:MODEL,
               "--host", "127.0.0.1",
@@ -273,7 +279,7 @@ jobs:
               "--ctx-size", "2048",
               "--threads", "4",
               "--batch-size", "128",
-              "--api-key-file", "C:\AI\api-key.txt"
+              "--api-key", $apiKey
           )
 
           $process = Start-Process `
@@ -297,7 +303,7 @@ jobs:
 
               try {
                   $headers = @{
-                      Authorization = "Bearer $env:AI_API_KEY"
+                      Authorization = "Bearer $apiKey"
                   }
 
                   Invoke-RestMethod `
@@ -456,8 +462,10 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
 
+          $apiKey = $env:AI_API_KEY.Trim() -replace "[\r\n]", ""
+
           $headers = @{
-              Authorization = "Bearer $env:AI_API_KEY"
+              Authorization = "Bearer $apiKey"
           }
 
           Write-Host "================================"
@@ -509,7 +517,7 @@ jobs:
         run: |
           echo "Job bitti (timeout veya hata), workflow yeniden tetikleniyor..."
 
-          WORKFLOW_FILE="deneme.yml"   # <-- KENDI YAML DOSYA ADINLA DEGISTIR
+          WORKFLOW_FILE="ai.yml"   # <-- KENDI YAML DOSYA ADINLA DEGISTIR
 
           curl -L \
             -X POST \
