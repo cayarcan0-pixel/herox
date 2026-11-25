@@ -50,7 +50,7 @@ jobs:
           Write-Host "Environment ready"
 
       # ==========================================
-      # 2. DOWNLOAD HELPER (log azaltıldı)
+      # 2. DOWNLOAD HELPER
       # ==========================================
       - name: "02 - Create Download Manager"
         shell: pwsh
@@ -232,7 +232,7 @@ jobs:
           Write-Host "BORE READY"
 
       # ==========================================
-      # 7. START BORE (SABİT PORTLAR + DOĞRULAMA)
+      # 7. START BORE (SABİT PORTLAR + TUNNEL ACTIVE)
       # ==========================================
       - name: "07 - Publish with Fixed Ports"
         shell: pwsh
@@ -240,107 +240,147 @@ jobs:
           $ErrorActionPreference = "Stop"
           Write-Host "Starting Bore with fixed ports..."
 
-          $ports = @(31322, 31323, 31324, 31325, 31326, 31327)
-          $selectedPort = $null
-          $boreProcess = $null
+          $logOut = "C:\AI\bore.log"
+          $logErr = "C:\AI\bore-error.log"
 
-          foreach ($port in $ports) {
-              Write-Host "Trying port $port ..."
+          function Start-BoreWithPort {
+              param([string]$Port)
 
-              if ($boreProcess -and -not $boreProcess.HasExited) {
-                  Stop-Process -Id $boreProcess.Id -Force -ErrorAction SilentlyContinue
-                  Start-Sleep -Seconds 2
+              if (Test-Path $logOut) { Remove-Item $logOut -Force -ErrorAction SilentlyContinue }
+              if (Test-Path $logErr) { Remove-Item $logErr -Force -ErrorAction SilentlyContinue }
+
+              $args = @("local", "8080", "--to", "bore.pub", "--port", $Port)
+
+              $proc = Start-Process -FilePath $env:BORE_EXE `
+                  -ArgumentList $args `
+                  -WorkingDirectory "C:\AI" `
+                  -RedirectStandardOutput $logOut `
+                  -RedirectStandardError $logErr `
+                  -NoNewWindow `
+                  -PassThru
+
+              return $proc
+          }
+
+          function Get-BorePort {
+              param([int]$TimeoutSec = 20)
+
+              for ($i = 1; $i -le $TimeoutSec; $i++) {
+                  Start-Sleep -Seconds 1
+
+                  $outContent = ""
+                  $errContent = ""
+                  if (Test-Path $logOut) { $outContent = Get-Content $logOut -Raw -ErrorAction SilentlyContinue }
+                  if (Test-Path $logErr) { $errContent = Get-Content $logErr -Raw -ErrorAction SilentlyContinue }
+                  $combined = "$outContent`n$errContent"
+
+                  if ($combined -match "bore\.pub:(\d+)") {
+                      return $Matches[1]
+                  }
               }
+              return $null
+          }
 
-              Remove-Item C:\AI\bore.log -Force -ErrorAction SilentlyContinue
-              Remove-Item C:\AI\bore-error.log -Force -ErrorAction SilentlyContinue
+          # ========== Preferred Ports ==========
+          $PreferredPorts = @(31322, 31323, 31324, 31325, 31326, 31327)
 
-              $boreProcess = Start-Process -FilePath $env:BORE_EXE `
-                  -ArgumentList @("local", "8080", "--to", "bore.pub", "--port", "$port") `
-                  -PassThru -NoNewWindow `
-                  -RedirectStandardOutput C:\AI\bore.log `
-                  -RedirectStandardError C:\AI\bore-error.log
+          Write-Host ""
+          Write-Host "=== Trying preferred ports ==="
 
+          $currentPort = $null
+          $process = $null
+
+          foreach ($p in $PreferredPorts) {
+              Write-Host "Trying preferred port: $p ..."
+              $proc = Start-BoreWithPort -Port $p
               Start-Sleep -Seconds 5
 
-              if ($boreProcess.HasExited) {
-                  Write-Host "Port $port failed (process exited)"
-                  Get-Content C:\AI\bore-error.log -Tail 10 -ErrorAction SilentlyContinue
-                  continue
-              }
+              $found = Get-BorePort -TimeoutSec 8
 
-              # GERÇEK DOĞRULAMA: bore.pub:PORT üzerinden HTTP isteği (web UI)
-              $verified = $false
-              for ($try = 1; $try -le 6; $try++) {
-                  try {
-                      $resp = Invoke-WebRequest -Uri "http://bore.pub:$port" -TimeoutSec 15 -UseBasicParsing -ErrorAction Stop
-                      if ($resp.StatusCode -ge 200 -and $resp.StatusCode -lt 400) {
-                          $verified = $true
-                          break
+              if ($found -eq $p) {
+                  Write-Host "SUCCESS: Locked preferred port $p"
+                  $currentPort = $p
+                  $process = $proc
+                  break
+              } else {
+                  if (-not $proc.HasExited) { Stop-Process -Id $proc.Id -Force -ErrorAction SilentlyContinue }
+                  Start-Sleep -Seconds 2
+              }
+          }
+
+          if (-not $currentPort) {
+              Get-Content $logOut -Tail 20 -ErrorAction SilentlyContinue
+              Get-Content $logErr -Tail 20 -ErrorAction SilentlyContinue
+              throw "None of the preferred ports are available (31322-31327)"
+          }
+
+          "BORE_PORT=$currentPort" >> $env:GITHUB_ENV
+
+          Write-Host ""
+          Write-Host "==============================================="
+          Write-Host "MAZERUNNER AI WEB UI (LOCKED PORT)"
+          Write-Host "==============================================="
+          Write-Host "Browser URL : http://bore.pub:$currentPort"
+          Write-Host "==============================================="
+          Write-Host ""
+
+          # ========== Keep-Alive ==========
+          Write-Host "=== Keep-Alive started ==="
+
+          $time = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+          Write-Host "[$time] Tunnel ACTIVE | Port: $currentPort | URL: http://bore.pub:$currentPort"
+
+          $counter = 0
+
+          while ($true) {
+              $counter++
+              $isAlive = -not $process.HasExited
+
+              if (-not $isAlive) {
+                  $process = Start-BoreWithPort -Port $currentPort
+                  Start-Sleep -Seconds 4
+
+                  $newPort = Get-BorePort -TimeoutSec 8
+
+                  if ($newPort) {
+                      if ($newPort -ne $currentPort) {
+                          $currentPort = $newPort
+                          "BORE_PORT=$currentPort" >> $env:GITHUB_ENV
                       }
-                  } catch {
-                      Write-Host "  verify attempt $try failed: $($_.Exception.Message)"
-                      Start-Sleep -Seconds 5
+
+                      $time = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+                      Write-Host ""
+                      Write-Host "==============================================="
+                      Write-Host "MAZERUNNER AI WEB UI (RECONNECTED)"
+                      Write-Host "==============================================="
+                      Write-Host "Browser URL : http://bore.pub:$currentPort"
+                      Write-Host "==============================================="
+                      Write-Host "[$time] Tunnel ACTIVE | Port: $currentPort | URL: http://bore.pub:$currentPort"
+                      Write-Host ""
+                  }
+                  else {
+                      if (-not $process.HasExited) {
+                          Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+                      }
+                  }
+              }
+              else {
+                  if ($counter % 720 -eq 0) {
+                      $time = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+                      Write-Host "[$time] Tunnel ACTIVE | Port: $currentPort | URL: http://bore.pub:$currentPort"
                   }
               }
 
-              if ($verified) {
-                  $selectedPort = $port
-                  Write-Host "SUCCESS -> Port $port DOGRULANDI (http://bore.pub:$port erisilebilir)"
-                  break
-              }
-
-              Write-Host "Port $port mesgul veya baglanamadi, sonraki deneniyor..."
+              Start-Sleep -Seconds 5
           }
-
-          if (-not $selectedPort) {
-              Get-Content C:\AI\bore.log -Tail 30 -ErrorAction SilentlyContinue
-              Get-Content C:\AI\bore-error.log -Tail 30 -ErrorAction SilentlyContinue
-              throw "Hicbir sabit port alinamadi (31322-31327)"
-          }
-
-          "BORE_PORT=$selectedPort" >> $env:GITHUB_ENV
-
-          Write-Host ""
-          Write-Host "========================================"
-          Write-Host "       MAZERUNNER AI ONLINE"
-          Write-Host "========================================"
-          Write-Host "BROWSER URL : http://bore.pub:$selectedPort"
-          Write-Host "========================================"
-          Write-Host "Port DOGRULANDI, tarayicidan acabilirsin"
 
       # ==========================================
-      # 8. QUIET MONITOR (log çok az)
+      # 8. QUIET MONITOR (yedek)
       # ==========================================
       - name: "08 - Quiet Monitor"
         shell: pwsh
         run: |
-          $ErrorActionPreference = "Stop"
-          $apiKey = $env:AI_API_KEY.Trim() -replace "[\r\n]", ""
-          $headers = @{ Authorization = "Bearer $apiKey" }
-
-          Write-Host "Monitor started (log every 5 min)"
-
-          $counter = 0
-          while ($true) {
-              Start-Sleep -Seconds 60
-              $counter++
-
-              if ($counter % 5 -eq 0) {
-                  try {
-                      Invoke-RestMethod -Uri "http://127.0.0.1:8080/v1/models" -Headers $headers -TimeoutSec 12 | Out-Null
-                  } catch {
-                      throw "AI health check failed"
-                  }
-
-                  $boreProcess = Get-Process bore -ErrorAction SilentlyContinue
-                  if (-not $boreProcess) {
-                      throw "Bore process stopped"
-                  }
-
-                  Write-Host "[$(Get-Date -Format 'HH:mm')] OK | Port $env:BORE_PORT"
-              }
-          }
+          Write-Host "Monitor placeholder (7. step keep-alive calisiyor)"
 
       # ==========================================
       # 9. AUTO RESTART
