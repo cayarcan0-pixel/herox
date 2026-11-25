@@ -9,7 +9,7 @@ permissions:
 jobs:
   ai:
     runs-on: windows-2022
-    timeout-minutes: 180
+    timeout-minutes: 300
 
     steps:
 
@@ -151,7 +151,7 @@ jobs:
           Write-Host "Download manager ready"
 
       # ==========================================
-      # 3. DOWNLOAD LLAMA.CPP  (DÜZELTİLDİ)
+      # 3. DOWNLOAD LLAMA.CPP  (ASSET-AWARE)
       # ==========================================
 
       - name: "03 - Download llama.cpp"
@@ -161,13 +161,11 @@ jobs:
 
           Write-Host "Searching for llama.cpp release with Windows CPU asset..."
 
-          # 1. Son 20 sürümü listele (latest yerine)
           $releases = Invoke-RestMethod `
             -Uri "https://api.github.com/repos/ggml-org/llama.cpp/releases?per_page=20" `
             -TimeoutSec 60 `
             -Headers @{ "User-Agent" = "MAZERUNNER-AI" }
 
-          # 2. Windows CPU zip'i içeren en yeni sürümü bul
           $targetRelease = $null
           $asset = $null
 
@@ -190,7 +188,6 @@ jobs:
           Write-Host "Selected release: $($targetRelease.tag_name)"
           Write-Host "Selected asset: $($asset.name)"
 
-          # 3. İndirme
           python -u C:\AI\download.py `
             $asset.browser_download_url `
             C:\AI\llama.zip `
@@ -220,7 +217,7 @@ jobs:
           Write-Host "LLAMA.CPP INSTALLED"
 
       # ==========================================
-      # 4. DOWNLOAD DOLPHIN MODEL  (DÜZELTİLDİ)
+      # 4. DOWNLOAD DOLPHIN MODEL
       # ==========================================
 
       - name: "04 - Download Dolphin 8B Q4"
@@ -231,7 +228,6 @@ jobs:
           $repo = "bartowski/Dolphin3.0-Llama3.1-8B-GGUF"
           $file = "Dolphin3.0-Llama3.1-8B-Q4_K_M.gguf"
 
-          # ?download=true KALDIRILDI
           $url = "https://huggingface.co/$repo/resolve/main/$file"
 
           Write-Host "================================"
@@ -241,7 +237,6 @@ jobs:
 
           New-Item -ItemType Directory -Force C:\AI\model | Out-Null
 
-          # URL tırnak içinde
           python -u C:\AI\download.py `
             "$url" `
             "C:\AI\model\$file" `
@@ -501,3 +496,25 @@ jobs:
                   Write-Host "[$(Get-Date -Format 'HH:mm:ss')] AI ACTIVE | BORE ACTIVE | PORT $env:BORE_PORT"
               }
           }
+
+      # ==========================================
+      # 9. AUTO RESTART ON EXIT (5 SAAT SONRA)
+      # ==========================================
+
+      - name: "09 - Auto Restart on Exit"
+        if: always()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.RUNNER }}
+        run: |
+          echo "Job bitti (timeout veya hata), workflow yeniden tetikleniyor..."
+
+          WORKFLOW_FILE="deneme.yml"   # <-- KENDI YAML DOSYA ADINLA DEGISTIR
+
+          curl -L \
+            -X POST \
+            -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H "X-GitHub-Api-Version: 2026-03-10" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/workflows/${WORKFLOW_FILE}/dispatches" \
+            -d '{"ref":"${{ github.ref_name }}"}'
