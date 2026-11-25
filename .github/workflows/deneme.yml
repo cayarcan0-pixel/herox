@@ -1,4 +1,3 @@
-
 name: MAZERUNNER AI - Dolphin 8B + Bore
 
 on:
@@ -152,7 +151,7 @@ jobs:
           Write-Host "Download manager ready"
 
       # ==========================================
-      # 3. DOWNLOAD LLAMA.CPP
+      # 3. DOWNLOAD LLAMA.CPP  (DÜZELTİLDİ)
       # ==========================================
 
       - name: "03 - Download llama.cpp"
@@ -160,25 +159,38 @@ jobs:
         run: |
           $ErrorActionPreference = "Stop"
 
-          Write-Host "Searching latest llama.cpp release..."
+          Write-Host "Searching for llama.cpp release with Windows CPU asset..."
 
-          $release = Invoke-RestMethod `
-            -Uri "https://api.github.com/repos/ggml-org/llama.cpp/releases/latest" `
+          # 1. Son 20 sürümü listele (latest yerine)
+          $releases = Invoke-RestMethod `
+            -Uri "https://api.github.com/repos/ggml-org/llama.cpp/releases?per_page=20" `
             -TimeoutSec 60 `
             -Headers @{ "User-Agent" = "MAZERUNNER-AI" }
 
-          $asset = $release.assets |
-            Where-Object {
-              $_.name -match 'bin-win-cpu-x64\.zip$'
-            } |
-            Select-Object -First 1
+          # 2. Windows CPU zip'i içeren en yeni sürümü bul
+          $targetRelease = $null
+          $asset = $null
 
-          if (-not $asset) {
-              throw "Windows CPU release not found"
+          foreach ($release in $releases) {
+              $cpuAsset = $release.assets |
+                Where-Object { $_.name -match 'bin-win-cpu-x64\.zip$' } |
+                Select-Object -First 1
+
+              if ($cpuAsset) {
+                  $targetRelease = $release
+                  $asset = $cpuAsset
+                  break
+              }
           }
 
-          Write-Host "Selected: $($asset.name)"
+          if (-not $asset) {
+              throw "Windows CPU release not found in the last 20 releases"
+          }
 
+          Write-Host "Selected release: $($targetRelease.tag_name)"
+          Write-Host "Selected asset: $($asset.name)"
+
+          # 3. İndirme
           python -u C:\AI\download.py `
             $asset.browser_download_url `
             C:\AI\llama.zip `
