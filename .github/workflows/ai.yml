@@ -215,7 +215,7 @@ jobs:
                   "--host", "127.0.0.1",
                   "--port", "8080",
                   "--alias", "QWEN3-HERETIC",
-                  "--ctx-size", "8192",
+                  "--ctx-size", "100000000",
                   "--threads", "4",
                   "--batch-size", "128",
                   "--api-key", $apiKey,
