@@ -1,4 +1,4 @@
-name: MAZERUNNER AI - Dolphin 8B + Bore
+name: MAZERUNNER AI - DeepSeek 8B + Bore
 
 on:
   workflow_dispatch:
@@ -142,25 +142,28 @@ jobs:
           Write-Host "LLAMA.CPP READY"
 
       # ==========================================
-      # 4. DOWNLOAD DOLPHIN MODEL + BORE
+      # 4. DOWNLOAD DEEPSEEK MODEL + BORE
       # ==========================================
-      - name: "04 - Download Model + Bore"
+      - name: "04 - Download DeepSeek + Bore"
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          $file = "Dolphin3.0-Llama3.1-8B-Q4_K_M.gguf"
-          $url = "https://huggingface.co/bartowski/Dolphin3.0-Llama3.1-8B-GGUF/resolve/main/$file"
 
-          Write-Host "Downloading Dolphin 8B Q4_K_M..."
+          # DeepSeek-R1-Distill-Llama-8B Q4_K_M (4.92 GB)
+          $file = "DeepSeek-R1-Distill-Llama-8B-Q4_K_M.gguf"
+          $url = "https://huggingface.co/bartowski/DeepSeek-R1-Distill-Llama-8B-GGUF/resolve/main/$file"
+
+          Write-Host "Downloading DeepSeek-R1-Distill-Llama-8B Q4_K_M..."
           New-Item -ItemType Directory -Force C:\AI\model | Out-Null
 
-          python -u C:\AI\download.py "$url" "C:\AI\model\$file" "DOLPHIN"
+          python -u C:\AI\download.py "$url" "C:\AI\model\$file" "DEEPSEEK"
           if ($LASTEXITCODE -ne 0) { throw "Model download failed" }
           if (-not (Test-Path "C:\AI\model\$file")) { throw "Model file missing" }
 
           "MODEL=C:\AI\model\$file" >> $env:GITHUB_ENV
-          Write-Host "DOLPHIN MODEL READY"
+          Write-Host "DEEPSEEK MODEL READY"
 
+          # Bore indirme
           Write-Host "Downloading Bore..."
           $release = Invoke-RestMethod -Uri "https://api.github.com/repos/ekzhang/bore/releases/latest" -TimeoutSec 60 -Headers @{ "User-Agent" = "MAZERUNNER-AI" }
           $asset = $release.assets | Where-Object { $_.name -match 'x86_64-pc-windows-msvc\.zip$' } | Select-Object -First 1
@@ -183,7 +186,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          Write-Host "Starting MAZERUNNER AI + Bore (unified)..."
+          Write-Host "Starting MAZERUNNER AI (DeepSeek) + Bore..."
 
           $apiKey = $env:AI_API_KEY.Trim() -replace "[\r\n]", ""
 
@@ -198,11 +201,13 @@ jobs:
                   "-m", $env:MODEL,
                   "--host", "127.0.0.1",
                   "--port", "8080",
-                  "--alias", "MAZERUNNER-AI",
+                  "--alias", "DEEPSEEK-R1",
                   "--ctx-size", "4096",
                   "--threads", "4",
                   "--batch-size", "128",
-                  "--api-key", $apiKey
+                  "--api-key", $apiKey,
+                  "--jinja",
+                  "--reasoning-budget", "0"
               )
               return Start-Process -FilePath $env:LLAMA_EXE -ArgumentList $aiArgs -PassThru -NoNewWindow `
                   -RedirectStandardOutput $aiOut -RedirectStandardError $aiErr
