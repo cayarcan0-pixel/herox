@@ -1,4 +1,4 @@
-name: MAZERUNNER AI - DeepSeek 8B + Bore
+name: MAZERUNNER AI - Qwen3 8B Heretic + Bore
 
 on:
   workflow_dispatch:
@@ -142,26 +142,26 @@ jobs:
           Write-Host "LLAMA.CPP READY"
 
       # ==========================================
-      # 4. DOWNLOAD DEEPSEEK MODEL + BORE
+      # 4. DOWNLOAD QWEN3 HERETIC + BORE
       # ==========================================
-      - name: "04 - Download DeepSeek + Bore"
+      - name: "04 - Download Qwen3 Heretic + Bore"
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
 
-          # DeepSeek-R1-Distill-Llama-8B Q4_K_M (4.92 GB)
-          $file = "DeepSeek-R1-Distill-Llama-8B-Q4_K_M.gguf"
-          $url = "https://huggingface.co/bartowski/DeepSeek-R1-Distill-Llama-8B-GGUF/resolve/main/$file"
+          # Qwen3-8B-Heretic Q4_K_M (4.7 GB)
+          $file = "Qwen3-8B-heretic-Q4_K_M.gguf"
+          $url = "https://huggingface.co/xFanexx/Qwen3-8B-heretic-GGUF/resolve/main/$file"
 
-          Write-Host "Downloading DeepSeek-R1-Distill-Llama-8B Q4_K_M..."
+          Write-Host "Downloading Qwen3-8B-Heretic Q4_K_M..."
           New-Item -ItemType Directory -Force C:\AI\model | Out-Null
 
-          python -u C:\AI\download.py "$url" "C:\AI\model\$file" "DEEPSEEK"
+          python -u C:\AI\download.py "$url" "C:\AI\model\$file" "QWEN3"
           if ($LASTEXITCODE -ne 0) { throw "Model download failed" }
           if (-not (Test-Path "C:\AI\model\$file")) { throw "Model file missing" }
 
           "MODEL=C:\AI\model\$file" >> $env:GITHUB_ENV
-          Write-Host "DEEPSEEK MODEL READY"
+          Write-Host "QWEN3 HERETIC MODEL READY"
 
           # Bore indirme
           Write-Host "Downloading Bore..."
@@ -186,7 +186,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
-          Write-Host "Starting MAZERUNNER AI (DeepSeek) + Bore..."
+          Write-Host "Starting MAZERUNNER AI (Qwen3 Heretic) + Bore..."
 
           $apiKey = $env:AI_API_KEY.Trim() -replace "[\r\n]", ""
 
@@ -201,8 +201,8 @@ jobs:
                   "-m", $env:MODEL,
                   "--host", "127.0.0.1",
                   "--port", "8080",
-                  "--alias", "DEEPSEEK-R1",
-                  "--ctx-size", "4096",
+                  "--alias", "QWEN3-HERETIC",
+                  "--ctx-size", "8192",
                   "--threads", "4",
                   "--batch-size", "128",
                   "--api-key", $apiKey,
