@@ -142,25 +142,38 @@ jobs:
           Write-Host "LLAMA.CPP READY"
 
       # ==========================================
-      # 4. DOWNLOAD QWEN3 HERETIC + BORE
+      # 4. DOWNLOAD QWEN3 HERETIC + BORE (OTOMATİK BULUCU)
       # ==========================================
       - name: "04 - Download Qwen3 Heretic + Bore"
         shell: pwsh
         run: |
           $ErrorActionPreference = "Stop"
 
-          # Qwen3-8B-Heretic Q4_K_M (4.7 GB)
-          $file = "Qwen3-8B-heretic-Q4_K_M.gguf"
-          $url = "https://huggingface.co/xFanexx/Qwen3-8B-heretic-GGUF/resolve/main/$file"
-
-          Write-Host "Downloading Qwen3-8B-Heretic Q4_K_M..."
+          Write-Host "Searching for Q4_K_M model on HuggingFace API..."
+          
+          $apiUrl = "https://huggingface.co/api/models/xFanexx/Qwen3-8B-heretic-GGUF"
+          $modelInfo = Invoke-RestMethod -Uri $apiUrl -Headers @{ "User-Agent" = "MAZERUNNER-AI" } -TimeoutSec 30
+          
+          # API'den Q4_K_M içeren dosyayı bul
+          $targetFile = $modelInfo.siblings | Where-Object { $_.rfilename -match "Q4_K_M" } | Select-Object -First 1
+          
+          if (-not $targetFile) {
+              throw "Could not find a Q4_K_M GGUF file in the repository."
+          }
+          
+          $fileName = $targetFile.rfilename
+          $downloadUrl = "https://huggingface.co/xFanexx/Qwen3-8B-heretic-GGUF/resolve/main/$fileName"
+          
+          Write-Host "Found: $fileName"
+          Write-Host "Downloading from: $downloadUrl"
+          
           New-Item -ItemType Directory -Force C:\AI\model | Out-Null
 
-          python -u C:\AI\download.py "$url" "C:\AI\model\$file" "QWEN3"
+          python -u C:\AI\download.py "$downloadUrl" "C:\AI\model\$fileName" "QWEN3"
           if ($LASTEXITCODE -ne 0) { throw "Model download failed" }
-          if (-not (Test-Path "C:\AI\model\$file")) { throw "Model file missing" }
+          if (-not (Test-Path "C:\AI\model\$fileName")) { throw "Model file missing" }
 
-          "MODEL=C:\AI\model\$file" >> $env:GITHUB_ENV
+          "MODEL=C:\AI\model\$fileName" >> $env:GITHUB_ENV
           Write-Host "QWEN3 HERETIC MODEL READY"
 
           # Bore indirme
